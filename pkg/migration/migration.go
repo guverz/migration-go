@@ -4,93 +4,20 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	// "github.com/AlexBurnes/version-go/pkg/version"
-	// "time"
 )
 
 const (
-	// 	Help = `migration helper to create migrations scripts
-	// usage: migration [-h|--help] [-V|--version] add
-	// options:
-	//         -h|--help      print this help and exit
-	//         -V|--version   print script version and exit
-	// commands:
-	//         add            add new migrations script with properly defined name
-	//         collect        collect migrations on submodules between commits into migrations catalog
-	//         check          check unregtistered migrations files at submodules`
 	MiniHelpDir  = "scripts/migration.template.sql"
 	MigrationDir = "./migrations"
 	IncludeHelp  = true
-	DescribePath = "scripts/describe.sh"
 )
-
-// func main() {
-
-// 	var (
-// 		helpFlag    bool
-// 		versionFlag bool
-// 	)
-
-// 	flag.Usage = func() {}
-
-// 	flag.BoolVar(&helpFlag, "h", false, "print help and exit")
-// 	flag.BoolVar(&helpFlag, "help", false, "print help and exit")
-// 	flag.BoolVar(&versionFlag, "V", false, "print script version and exit")
-// 	flag.BoolVar(&versionFlag, "version", false, "print script version and exit")
-
-// 	err := flag.CommandLine.Parse(os.Args[1:])
-// 	if err != nil {
-// 		fmt.Fprintf(os.Stderr, "Error: Unknown flag provided\n")
-// 		os.Exit(1)
-// 	}
-
-// 	switch {
-// 	case helpFlag:
-// 		help()
-// 		os.Exit(0)
-// 	case versionFlag:
-// 		version()
-// 		os.Exit(0)
-// 	}
-
-// 	if flag.NArg() == 0 && flag.NFlag() > 0 {
-// 		fmt.Fprintf(os.Stderr, "Error: Unknown flag provided\n")
-// 		os.Exit(0)
-// 	}
-
-// 	args := flag.Args()
-// 	if len(args) == 0 {
-// 		os.Exit(0)
-// 	}
-
-// 	switch args[0] {
-// 	case "add":
-// 		add()
-// 		os.Exit(0)
-// 	case "collect":
-// 		collect()
-// 		os.Exit(0)
-// 	case "check":
-// 		check()
-// 		os.Exit(0)
-// 	default:
-// 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n", args[0])
-// 		os.Exit(0)
-// 	}
-// }
-
-// func help() {
-// 	fmt.Println(Help)
-// }
 
 func minihelp() string {
 	text, err := os.ReadFile(MiniHelpDir)
@@ -101,64 +28,21 @@ func minihelp() string {
 	return string(text)
 }
 
-// func version() {
-// 	Version := "0.1"
-// 	fmt.Println(Version)
-// }
-
-func describe(arg string) (string, error) {
-	// should think of implementing wsl use for windows
-	var cmd *exec.Cmd
-	if _, err := os.Stat(DescribePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("script not found at %s", DescribePath)
-	}
-	if runtime.GOOS == "windows" {
-		gitBashPath := "C:\\Program Files\\Git\\bin\\bash.exe"
-		if _, err := os.Stat(gitBashPath); err == nil {
-			cmd = exec.Command(gitBashPath, "-c", fmt.Sprintf("./%s %s", DescribePath, arg))
-		} else {
-			return "", fmt.Errorf("bash not found on Windows")
-		}
-	} else {
-		cmd = exec.Command("bin/bash", DescribePath, arg)
-	}
-
+func getFullVersionName() (string, error) {
+	cmd := exec.Command("version", "full")
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to run describe %s: %v", arg, err)
+		return "", fmt.Errorf("failed to run version full: %v", err)
 	}
-	return strings.ReplaceAll(string(output), "\n", ""), nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func Add() error {
-	project, err := describe("project")
+	baseName, err := getFullVersionName()
 	if err != nil {
-		log.Fatal(err)
-	}
-	version, err := describe("version")
-	if err != nil {
-		log.Fatal(err)
-	}
-	release, err := describe("release")
-	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to get full version name: %v", err)
 	}
 
-	baseName := fmt.Sprintf("%s-%s-%s", project, version, release)
-	// var cmd *exec.Cmd
-	// cmd = exec.Command("version", "full")
-	// output, err := cmd.Output()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// baseName := string(output)
-	// baseName, err := version.GetVersion()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	version.GetProjectName
 	fmt.Printf("Add migration script %s\n", baseName)
 
 	increment, err := FindLastMigrationNumber(MigrationDir, baseName)

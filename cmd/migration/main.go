@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-var Version = "0.1"
+var AppVersion = "0.1"
 var Help = `migration helper to create migrations scripts
 usage: migration [-h|--help] [-V|--version] add
 options:
@@ -18,7 +18,6 @@ commands:
         check          check unregtistered migrations files at submodules`
 
 func main() {
-
 	var (
 		helpFlag    bool
 		versionFlag bool
@@ -42,7 +41,7 @@ func main() {
 		help()
 		os.Exit(0)
 	case versionFlag:
-		version()
+		printVersion()
 		os.Exit(0)
 	}
 
@@ -66,9 +65,6 @@ func main() {
 	case "check":
 		Check_Migration()
 		os.Exit(0)
-	case "temp":
-		Get_Ver()
-		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n", args[0])
 		os.Exit(0)
@@ -79,6 +75,6 @@ func help() {
 	fmt.Println(Help)
 }
 
-func version() {
-	fmt.Println(Version)
+func printVersion() {
+	fmt.Println(AppVersion)
 }
