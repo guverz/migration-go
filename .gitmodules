@@ -1,9 +1,0 @@
-[submodule "submodules/submodule1"]
-	path = submodules/submodule1
-	url = https://github.com/guverz/ToDoApp
-[submodule "submodules/submodule2"]
-	path = submodules/submodule2
-	url = https://github.com/guverz/AddNumApp
-[submodule "submodules/submodule3"]
-	path = submodules/submodule3
-	url = https://github.com/guverz/figures_hw

@@ -1,0 +1,354 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+const (
+	Help = `migration helper to create migrations scripts
+usage: migration [-h|--help] [-V|--version] add
+options:
+        -h|--help      print this help and exit
+        -V|--version   print script version and exit
+commands:
+        add            add new migrations script with properly defined name
+        collect        collect migrations on submodules between commits into migrations catalog
+        check          check unregtistered migrations files at submodules`
+	MiniHelpDir  = "migration.template.sql"
+	MigrationDir = "./migrations"
+	IncludeHelp  = true
+)
+
+type MigrationMeta struct {
+	Prefix          string
+	Ext             string
+	Dir             string
+	UpFile          string
+	DownFile        string
+	IsFromSubmodule bool
+	OriginalPath    string
+	MD5             string
+	ProjectName     string
+}
+
+type MigrationPair struct {
+	Prefix      string
+	Ext         string
+	Dir         string
+	UpFile      string
+	DownFile    string
+	ProjectName string
+	ModulePath  string // Путь к модулю, если это подмодуль
+}
+
+type IncludeInfo struct {
+	IncludingFile string
+	IncludedFile  string
+	MD5           string
+}
+
+func main() {
+
+	var (
+		helpFlag    bool
+		versionFlag bool
+	)
+
+	flag.Usage = func() {}
+
+	flag.BoolVar(&helpFlag, "h", false, "print help and exit")
+	flag.BoolVar(&helpFlag, "help", false, "print help and exit")
+	flag.BoolVar(&versionFlag, "V", false, "print script version and exit")
+	flag.BoolVar(&versionFlag, "version", false, "print script version and exit")
+
+	err := flag.CommandLine.Parse(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Unknown flag provided\n")
+		os.Exit(1)
+	}
+
+	switch {
+	case helpFlag:
+		help()
+		os.Exit(0)
+	case versionFlag:
+		version()
+		os.Exit(0)
+	}
+
+	if flag.NArg() == 0 && flag.NFlag() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: Unknown flag provided\n")
+		os.Exit(0)
+	}
+
+	args := flag.Args()
+	if len(args) == 0 {
+		os.Exit(0)
+	}
+
+	switch args[0] {
+	case "add":
+		add()
+		os.Exit(0)
+	case "collect":
+		collect()
+		os.Exit(0)
+	case "check":
+		check()
+		os.Exit(0)
+	default:
+		fmt.Fprintf(os.Stderr, "Error: Unknown command '%s'\n", args[0])
+		os.Exit(0)
+	}
+}
+
+func help() {
+	fmt.Println(Help)
+}
+
+func minihelp() (string, error) {
+	text, err := os.ReadFile(MiniHelpDir)
+	if err != nil {
+		return "", fmt.Errorf("Error reading MiniHelp: %v", err)
+	}
+	return string(text), nil
+}
+
+func version() {
+	Version := "0.1"
+	fmt.Println(Version)
+}
+
+func describe(arg string) (string, error) {
+	cmd := exec.Command("version", arg)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run version %v, %v", arg, err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func add() error {
+	baseName, err := describe("full")
+	if err != nil {
+		return fmt.Errorf("failed to get git repo information")
+	}
+
+	if err := os.MkdirAll(MigrationDir, 0755); err != nil {
+		return err
+	}
+
+	increment, err := FindLastMigrationNumber(MigrationDir, baseName)
+	if err != nil {
+		return fmt.Errorf("failed to find last migration: %v", err)
+	}
+	increment++
+
+	migrationFile := fmt.Sprintf("%s-%d", baseName, increment)
+	err = CreateMigrationFiles(MigrationDir, migrationFile, IncludeHelp)
+	if err != nil {
+		return fmt.Errorf("failed to create migration files: %v", err)
+	}
+
+	fmt.Printf("Created migration files:\n   %s/%s.up.sql\n   %s/%s.down.sql\n",
+		MigrationDir, migrationFile, MigrationDir, migrationFile)
+
+	return nil
+}
+
+func FindLastMigrationNumber(dir, baseName string) (int, error) {
+	pattern := regexp.MustCompile(fmt.Sprintf(`^%s-(\d+)\.(up|down)\.sql$`, regexp.QuoteMeta(baseName)))
+	var maxNum int
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read directory %s: %v", dir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		matches := pattern.FindStringSubmatch(entry.Name())
+		if len(matches) > 1 {
+			num, err := strconv.Atoi(matches[1])
+			if err != nil {
+				continue
+			}
+			if num > maxNum {
+				maxNum = num
+			}
+		}
+	}
+
+	return maxNum, nil
+}
+
+func CreateMigrationFiles(dir, baseName string, includeHelp bool) error {
+	upContent := fmt.Sprintf("# %s.up.sql\n", baseName)
+	GetMiniHelp, _ := minihelp()
+	if includeHelp {
+		upContent += GetMiniHelp + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, baseName+".up.sql"), []byte(upContent), 0644); err != nil {
+		return err
+	}
+
+	downContent := fmt.Sprintf("# %s.down.sql\n", baseName)
+	if includeHelp {
+		downContent += GetMiniHelp + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, baseName+".down.sql"), []byte(downContent), 0644); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func check() {
+	migrationList(MigrationDir)
+	parseInclude()
+}
+
+func collect() {
+	log.Println("temp")
+}
+
+func migrationList(dir string) error {
+	// missedIncludesCnt := 0
+	// deletedIncludesCnt := 0
+	// t0 := time.Now()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %v", dir, err)
+	}
+
+	fileMap := make(map[string]bool)
+	for _, entry := range entries {
+		fileMap[entry.Name()] = true
+	}
+
+	pattern := regexp.MustCompile(`^(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+
+	for _, entry := range entries {
+		matches := pattern.FindStringSubmatch(entry.Name())
+		if len(matches) != 3 {
+			continue
+		}
+
+		prefix, ext := matches[1], matches[2]
+		downFileName := fmt.Sprintf("%s.down.%s", prefix, ext)
+
+		if _, exists := fileMap[downFileName]; !exists {
+			log.Printf("missing down file for up file: %s)", entry.Name())
+		}
+	}
+
+	// downFilesCh := make(chan string)
+	// var wg sync.WaitGroup
+
+	// // anonymous function gets existing migration-up files and creates down-counterpart that's being sent
+	// wg.Go(func() {
+	// 	defer close(downFilesCh)
+	// 	for _, entry := range entries {
+	// 		// log.Println(entry) //if debug true should show read files in the dir
+	// 		matches := pattern.FindStringSubmatch(entry.Name())
+	// 		if len(matches) != 3 {
+	// 			continue
+	// 		}
+	// 		prefix, ext := matches[1], matches[2]
+	// 		downFilesCh <- fmt.Sprintf("%s.down.%s", prefix, ext)
+	// 	}
+	// })
+	// // anonymous function gets made up migration-down files and checks them for existence
+	// wg.Go(func() {
+	// 	for x := range downFilesCh {
+	// 		rslt, err := FileExists(entries, x)
+	// 		if err != nil {
+	// 			continue
+	// 		}
+	// 		if !rslt {
+	// 			log.Printf("missing %s", x)
+	// 		}
+	// 	}
+	// })
+	// wg.Wait()
+	// fmt.Println(time.Since(t0))
+	return nil
+}
+
+func parseInclude() {
+	log.Println("temp")
+}
+
+// func FileExists(entries []os.DirEntry, fileName string) (bool, error) {
+// 	if fileName == "" {
+// 		return false, fmt.Errorf("fileName is empty")
+// 	}
+// 	for _, entry := range entries {
+// 		if entry.Name() == fileName {
+// 			return true, nil
+// 		}
+// 	}
+
+// 	return false, nil
+// }
+
+// get source of original migration file and md5
+func findMigrationStrings(dir string) (map[string]string, error) {
+	results := make(map[string]string)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		wg.Add(1)
+		go func(fileName string) {
+			defer wg.Done()
+
+			filePath := filepath.Join(dir, fileName)
+			file, err := os.Open(filePath)
+			if err != nil {
+				log.Printf("Warning: cannot open file %s: %v", filePath, err)
+				return
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "#migration:") {
+					parts := strings.SplitN(line, "#migration:", 2)
+					if len(parts) == 2 {
+						value := strings.SplitN(strings.TrimSpace(parts[1]), ";", 2)
+						mu.Lock()
+						results[value[0]] = value[1]
+						mu.Unlock()
+					}
+					break
+				}
+			}
+		}(entry.Name())
+	}
+
+	wg.Wait()
+	return results, nil
+}
