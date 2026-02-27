@@ -25,7 +25,7 @@ commands:
         collect        collect migrations on submodules between commits into migrations catalog
         check          check unregtistered migrations files at submodules`
 	MiniHelpDir  = "migration.template.sql"
-	MigrationDir = "./migrations"
+	MigrationDir = "./test/migrations"
 	IncludeHelp  = true
 )
 
@@ -219,6 +219,18 @@ func CreateMigrationFiles(dir, baseName string, includeHelp bool) error {
 func check() {
 	migrationList(MigrationDir)
 	parseInclude()
+	fullFileMD5, err := tempFindOriginalMigrations(MigrationDir)
+	if err != nil {
+		fmt.Println("error")
+	}
+	DirBase := make(map[string]string)
+	for el := range fullFileMD5 {
+		DirBase[filepath.Base(el)] = filepath.Dir(el)
+	}
+
+	for name, dir := range DirBase {
+		fmt.Println(dir, name)
+	}
 }
 
 func collect() {
@@ -284,6 +296,16 @@ func migrationList(dir string) error {
 	// 	}
 	// })
 	// wg.Wait()
+
+	// fullFileMD5, err := findMigrationStrings(dir)
+	// if err != nil {
+	// 	return err
+	// }
+	// DirBase := make(map[string]string)
+	// for el := range fullFileMD5 {
+	// 	DirBase[filepath.Base(el)] = filepath.Dir(el)
+	// }
+
 	// fmt.Println(time.Since(t0))
 	return nil
 }
@@ -305,8 +327,8 @@ func parseInclude() {
 // 	return false, nil
 // }
 
-// get source of original migration file and md5
-func findMigrationStrings(dir string) (map[string]string, error) {
+// get filepath of original migration file and md5
+func findOriginalMigrations(dir string) (map[string]string, error) {
 	results := make(map[string]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -336,12 +358,68 @@ func findMigrationStrings(dir string) (map[string]string, error) {
 			for scanner.Scan() {
 				line := scanner.Text()
 				if strings.HasPrefix(line, "#migration:") {
+
 					parts := strings.SplitN(line, "#migration:", 2)
 					if len(parts) == 2 {
+						// should add check for md5 value if value is missing should do bash-undefined analogue for go
 						value := strings.SplitN(strings.TrimSpace(parts[1]), ";", 2)
 						mu.Lock()
 						results[value[0]] = value[1]
 						mu.Unlock()
+					}
+					break
+				}
+			}
+		}(entry.Name())
+	}
+
+	wg.Wait()
+	return results, nil
+}
+
+// both checks for grammar of #migration: and creates map of potential down files
+func tempFindOriginalMigrations(dir string) (map[string]string, error) {
+	results := make(map[string]string)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	pattern := regexp.MustCompile(`^(.+)/(.+\-[0-9\.\-]+)\.up\.([^\.]+);(.+)$`)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		wg.Add(1)
+		go func(fileName string) {
+			defer wg.Done()
+
+			filePath := filepath.Join(dir, fileName)
+			file, err := os.Open(filePath)
+			if err != nil {
+				log.Printf("Warning: cannot open file %s: %v", filePath, err)
+				return
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "#migration:") {
+					matches := pattern.FindStringSubmatch(line)
+					if len(matches) == 5 {
+						path, prefix, ext := matches[1], matches[2], matches[3]
+						downFileNameDir := fmt.Sprintf("%s%s.down.%s", path, prefix, ext)
+						mu.Lock()
+						results[downFileNameDir] = matches[4]
+						mu.Unlock()
+					} else if len(matches) != 5 { // currently triggers on down files, should be fixed by changing regexp pattern to differentiate up & down files
+						fmt.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
 					}
 					break
 				}
