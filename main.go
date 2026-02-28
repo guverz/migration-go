@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -28,6 +27,7 @@ commands:
 	MiniHelpDir  = "migration.template.sql"
 	MigrationDir = "./test/migrations"
 	IncludeHelp  = true
+	TestDir      = "./test"
 )
 
 type MigrationMeta struct {
@@ -226,13 +226,21 @@ func check() {
 	}
 	DirBase := make(map[string]string)
 	for el := range fullFileMD5 {
-		DirBase[filepath.Base(el)] = filepath.Dir(el)
+		DirBase[filepath.Base(el)] = filepath.Join(TestDir, filepath.Dir(el))
 	}
 
 	for name, dir := range DirBase {
-		fmt.Println(dir, name)
+		rslt, err := findFileViaPath(dir, name)
+		if err != nil {
+			log.Println(err)
+		}
+		if rslt {
+			fmt.Printf("down-file %s found in %s\n", name, dir)
+		} else {
+			fmt.Printf("down-file %s not found in %s\n", name, dir)
+		}
 	}
-	fmt.Println(len(DirBase))
+
 }
 
 func collect() {
@@ -379,11 +387,13 @@ func findOriginalMigrations(dir string) (map[string]string, error) {
 	return results, nil
 }
 
+// both checks for grammar of #migration: and creates map of potential down files
 func tempFindOriginalMigrations(dir string) (map[string]string, error) {
-	t0 := time.Now()
+	// t0 := time.Now()
 	results := make(map[string]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	pattern := regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -425,13 +435,18 @@ func tempFindOriginalMigrations(dir string) (map[string]string, error) {
 					fileName := filepath.Base(pathFileName)
 					path := filepath.Dir(pathFileName)
 
-					nameParts := strings.Split(fileName, ".")
-					if len(nameParts) < 3 || nameParts[len(nameParts)-2] != "up" {
+					if !strings.Contains(fileName, ".up.") {
 						continue
 					}
 
-					ext := nameParts[len(nameParts)-1]
-					prefix := strings.Join(nameParts[:len(nameParts)-2], ".")
+					matches := pattern.FindStringSubmatch(fileName)
+					if matches == nil {
+						log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
+						continue
+					}
+
+					ext := matches[2]
+					prefix := matches[1]
 
 					downPath := filepath.Join(path, prefix+".down."+ext)
 
@@ -445,11 +460,24 @@ func tempFindOriginalMigrations(dir string) (map[string]string, error) {
 	}
 
 	wg.Wait()
-	fmt.Println(time.Since(t0))
+	// fmt.Println(time.Since(t0))
 	return results, nil
 }
 
-// both checks for grammar of #migration: and creates map of potential down files
+func findFileViaPath(path string, fileName string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, fmt.Errorf("failed to read directory %s: %v", path, err)
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == fileName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // func tempFindOriginalMigrations(dir string) (map[string]string, error) {
 // 	results := make(map[string]string)
 // 	var mu sync.Mutex
