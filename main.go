@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -231,10 +232,11 @@ func check() {
 	for name, dir := range DirBase {
 		fmt.Println(dir, name)
 	}
+	fmt.Println(len(DirBase))
 }
 
 func collect() {
-	log.Println("temp")
+	fmt.Println("collect_temp")
 }
 
 func migrationList(dir string) error {
@@ -377,13 +379,11 @@ func findOriginalMigrations(dir string) (map[string]string, error) {
 	return results, nil
 }
 
-// both checks for grammar of #migration: and creates map of potential down files
 func tempFindOriginalMigrations(dir string) (map[string]string, error) {
+	t0 := time.Now()
 	results := make(map[string]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-
-	pattern := regexp.MustCompile(`^(.+)/(.+\-[0-9\.\-]+)\.up\.([^\.]+);(.+)$`)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -410,17 +410,34 @@ func tempFindOriginalMigrations(dir string) (map[string]string, error) {
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				line := scanner.Text()
-				if strings.HasPrefix(line, "#migration:") {
-					matches := pattern.FindStringSubmatch(line)
-					if len(matches) == 5 {
-						path, prefix, ext := matches[1], matches[2], matches[3]
-						downFileNameDir := fmt.Sprintf("%s%s.down.%s", path, prefix, ext)
-						mu.Lock()
-						results[downFileNameDir] = matches[4]
-						mu.Unlock()
-					} else if len(matches) != 5 { // currently triggers on down files, should be fixed by changing regexp pattern to differentiate up & down files
-						fmt.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
+				if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
+					meta = strings.TrimSpace(meta)
+
+					parts := strings.SplitN(meta, ";", 2)
+					if len(parts) == 0 {
+						continue
 					}
+					pathFileName := parts[0]
+					md5 := ""
+					if len(parts) == 2 {
+						md5 = parts[1]
+					}
+					fileName := filepath.Base(pathFileName)
+					path := filepath.Dir(pathFileName)
+
+					nameParts := strings.Split(fileName, ".")
+					if len(nameParts) < 3 || nameParts[len(nameParts)-2] != "up" {
+						continue
+					}
+
+					ext := nameParts[len(nameParts)-1]
+					prefix := strings.Join(nameParts[:len(nameParts)-2], ".")
+
+					downPath := filepath.Join(path, prefix+".down."+ext)
+
+					mu.Lock()
+					results[downPath] = md5
+					mu.Unlock()
 					break
 				}
 			}
@@ -428,5 +445,66 @@ func tempFindOriginalMigrations(dir string) (map[string]string, error) {
 	}
 
 	wg.Wait()
+	fmt.Println(time.Since(t0))
 	return results, nil
 }
+
+// both checks for grammar of #migration: and creates map of potential down files
+// func tempFindOriginalMigrations(dir string) (map[string]string, error) {
+// 	results := make(map[string]string)
+// 	var mu sync.Mutex
+// 	var wg sync.WaitGroup
+
+// 	pattern := regexp.MustCompile(`^(.+)/(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+);(.+)$`)
+
+// 	entries, err := os.ReadDir(dir)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to read directory: %v", err)
+// 	}
+
+// 	for _, entry := range entries {
+// 		if entry.IsDir() {
+// 			continue
+// 		}
+
+// 		wg.Add(1)
+// 		go func(fileName string) {
+// 			defer wg.Done()
+
+// 			filePath := filepath.Join(dir, fileName)
+// 			file, err := os.Open(filePath)
+// 			if err != nil {
+// 				log.Printf("Warning: cannot open file %s: %v", filePath, err)
+// 				return
+// 			}
+// 			defer file.Close()
+
+// 			scanner := bufio.NewScanner(file)
+// 			for scanner.Scan() {
+// 				line := scanner.Text()
+// 				if strings.HasPrefix(line, "#migration:") {
+// 					parts := strings.SplitN(line, "#migration:", 2)
+// 					matches := pattern.FindStringSubmatch(parts[1])
+// 					// [0] - full line, [1] - filepath, [2] - prefix, [3] - up|down, [4] extension, [5] - MD5
+// 					if matches[3] != "up" && matches[3] != "down" || matches == nil {
+// 						// if matches == nil {
+// 						continue
+// 					} else if len(matches) == 6 {
+
+// 						path, prefix, ext := matches[1], matches[2], matches[4]
+// 						downFileNameDir := fmt.Sprintf("%s/%s.down.%s", path, prefix, ext)
+// 						mu.Lock()
+// 						results[downFileNameDir] = matches[5]
+// 						mu.Unlock()
+// 					} else if len(matches) != 6 {
+// 						fmt.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
+// 					}
+// 					break
+// 				}
+// 			}
+// 		}(entry.Name())
+// 	}
+
+// 	wg.Wait()
+// 	return results, nil
+// }
