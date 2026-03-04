@@ -17,12 +17,6 @@ func init() {
 	rootCmd.AddCommand(addCmd)
 }
 
-const (
-	MiniHelpDir  = "migration.template.sql"
-	MigrationDir = "./migrations"
-	IncludeHelp  = true
-)
-
 var addCmd = &cobra.Command{
 	Use:   "add",
 	Short: "temp",
