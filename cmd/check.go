@@ -77,7 +77,6 @@ func MigrationList(dir string) error {
 		if len(matches) != 3 {
 			continue
 		}
-
 		prefix, ext := matches[1], matches[2]
 		downFileName := fmt.Sprintf("%s.down.%s", prefix, ext)
 

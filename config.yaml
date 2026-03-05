@@ -17,4 +17,4 @@ help:
 
 directories:
   mini_help: "migration.template.sql"
-  migrations: "./migrations"
+  migrations: "./test/migrations"

@@ -13,7 +13,7 @@ var (
 	Help         string
 	MiniHelpDir  string
 	MigrationDir string
-	TestDir      string //unnecessary
+	TestDir      = "./test" //unnecessary
 	IncludeHelp  bool
 
 	rootCmd = &cobra.Command{
