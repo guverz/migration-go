@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -223,30 +222,6 @@ func check() {
 	if err := migrationList(MigrationDir); err != nil {
 		log.Printf("error migrationList: %s", err)
 	}
-	// if err := parseIncludeDir(MigrationDir); err != nil {
-	// 	log.Printf("error: %s", err)
-	// }
-	// fullFileMD5, err := tempFindOriginalMigrations(MigrationDir)
-	// if err != nil {
-	// 	fmt.Println("error")
-	// }
-	// DirBase := make(map[string]string)
-	// for el := range fullFileMD5 {
-	// 	DirBase[filepath.Base(el)] = filepath.Join(TestDir, filepath.Dir(el))
-	// }
-
-	// for name, dir := range DirBase {
-	// 	rslt, err := findFileViaPath(dir, name)
-	// 	if err != nil {
-	// 		log.Println(err)
-	// 	}
-	// 	if rslt {
-	// 		fmt.Printf("down-file %s found in %s\n", name, dir)
-	// 	} else {
-	// 		fmt.Printf("down-file %s not found in %s\n", name, dir)
-	// 	}
-	// }
-
 }
 
 func collect() {
@@ -257,6 +232,7 @@ func migrationList(dir string) error {
 	// missedIncludesCnt := 0
 	// deletedIncludesCnt := 0
 	t0 := time.Now()
+	var migrationIncludes []string
 	// pathFileMd5 := make(map[string]string)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -328,8 +304,13 @@ func migrationList(dir string) error {
 				if err != nil {
 					return fmt.Errorf("parseIncludeFile error: %w", err)
 				}
+
+				include, err = parseIncludeFile(simPath, downName)
+				if err != nil {
+					return fmt.Errorf("parseIncludeFile error: %w", err)
+				}
 				if include != "" {
-					log.Printf("Found include: '%s' in file '%s' via path: '%s'", include, upName, simPath)
+					migrationIncludes = append(migrationIncludes, include)
 				}
 
 				rslt, err := findFileViaPath(simPath, downName)
@@ -362,6 +343,9 @@ func migrationList(dir string) error {
 			}
 		}
 
+	}
+	for _, el := range migrationIncludes {
+		fmt.Println(el)
 	}
 	fmt.Println(time.Since(t0))
 	return nil
@@ -411,6 +395,7 @@ func parseIncludeDir(dir string) error {
 }
 
 func parseIncludeFile(dir, base string) (string, error) {
+	included := make(map[string]bool)
 	pattern := regexp.MustCompile(`^@([^;]+)`)
 
 	filePath := filepath.Join(dir, base)
@@ -435,152 +420,18 @@ func parseIncludeFile(dir, base string) (string, error) {
 			// log.Printf("Wrong line: '%s' in the file '%s' in the dir '%s'.", line, file.Name(), dir)
 			continue
 		}
+		// checking if new include has already added to map, if not it adds new incldue
+		if _, exists := included[matches[0]]; !exists {
+			included[matches[0]] = true
+		}
 		// it can return multiple matches, maybe this fuction should have a pointer to slice in order to append matches to it
 		// log.Printf("Found '%s' in file '%s'", matches[0], entry.Name())
-		return matches[0], nil
+		// kinda expecting to do it recursive the same way the bash script did
+		// parseIncludeFile(filepath.Dir(matches[0][1:]), filepath.Base(matches[0][1:]))
+		return matches[0][1:], nil
 	}
 
 	return "", nil
-}
-
-// func FileExists(entries []os.DirEntry, fileName string) (bool, error) {
-// 	if fileName == "" {
-// 		return false, fmt.Errorf("fileName is empty")
-// 	}
-// 	for _, entry := range entries {
-// 		if entry.Name() == fileName {
-// 			return true, nil
-// 		}
-// 	}
-
-// 	return false, nil
-// }
-
-// get filepath of original migration file and md5
-func findOriginalMigrations(dir string) (map[string]string, error) {
-	results := make(map[string]string)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory: %v", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		wg.Add(1)
-		go func(fileName string) {
-			defer wg.Done()
-
-			filePath := filepath.Join(dir, fileName)
-			file, err := os.Open(filePath)
-			if err != nil {
-				log.Printf("Warning: cannot open file %s: %v", filePath, err)
-				return
-			}
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if strings.HasPrefix(line, "#migration:") {
-
-					parts := strings.SplitN(line, "#migration:", 2)
-					if len(parts) == 2 {
-						// should add check for md5 value if value is missing should do bash-undefined analogue for go
-						value := strings.SplitN(strings.TrimSpace(parts[1]), ";", 2)
-						mu.Lock()
-						results[value[0]] = value[1]
-						mu.Unlock()
-					}
-					break
-				}
-			}
-		}(entry.Name())
-	}
-
-	wg.Wait()
-	return results, nil
-}
-
-// both checks for grammar of #migration: and creates map of potential down files
-func tempFindOriginalMigrations(dir string) (map[string]string, error) {
-	// t0 := time.Now()
-	results := make(map[string]string)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	pattern := regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory: %v", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		wg.Add(1)
-		go func(fileName string) {
-			defer wg.Done()
-
-			filePath := filepath.Join(dir, fileName)
-			file, err := os.Open(filePath)
-			if err != nil {
-				log.Printf("Warning: cannot open file %s: %v", filePath, err)
-				return
-			}
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
-					meta = strings.TrimSpace(meta)
-
-					parts := strings.SplitN(meta, ";", 2)
-					if len(parts) == 0 {
-						continue
-					}
-					pathFileName := parts[0]
-					md5 := ""
-					if len(parts) == 2 {
-						md5 = parts[1]
-					}
-					fileName := filepath.Base(pathFileName)
-					path := filepath.Dir(pathFileName)
-
-					if !strings.Contains(fileName, ".up.") {
-						continue
-					}
-
-					matches := pattern.FindStringSubmatch(fileName)
-					if matches == nil {
-						log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
-						continue
-					}
-
-					ext := matches[2]
-					prefix := matches[1]
-
-					downPath := filepath.Join(path, prefix+".down."+ext)
-
-					mu.Lock()
-					results[downPath] = md5
-					mu.Unlock()
-					break
-				}
-			}
-		}(entry.Name())
-	}
-
-	wg.Wait()
-	// fmt.Println(time.Since(t0))
-	return results, nil
 }
 
 func findFileViaPath(path string, fileName string) (bool, error) {
@@ -596,62 +447,3 @@ func findFileViaPath(path string, fileName string) (bool, error) {
 	}
 	return false, nil
 }
-
-// func tempFindOriginalMigrations(dir string) (map[string]string, error) {
-// 	results := make(map[string]string)
-// 	var mu sync.Mutex
-// 	var wg sync.WaitGroup
-
-// 	pattern := regexp.MustCompile(`^(.+)/(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+);(.+)$`)
-
-// 	entries, err := os.ReadDir(dir)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to read directory: %v", err)
-// 	}
-
-// 	for _, entry := range entries {
-// 		if entry.IsDir() {
-// 			continue
-// 		}
-
-// 		wg.Add(1)
-// 		go func(fileName string) {
-// 			defer wg.Done()
-
-// 			filePath := filepath.Join(dir, fileName)
-// 			file, err := os.Open(filePath)
-// 			if err != nil {
-// 				log.Printf("Warning: cannot open file %s: %v", filePath, err)
-// 				return
-// 			}
-// 			defer file.Close()
-
-// 			scanner := bufio.NewScanner(file)
-// 			for scanner.Scan() {
-// 				line := scanner.Text()
-// 				if strings.HasPrefix(line, "#migration:") {
-// 					parts := strings.SplitN(line, "#migration:", 2)
-// 					matches := pattern.FindStringSubmatch(parts[1])
-// 					// [0] - full line, [1] - filepath, [2] - prefix, [3] - up|down, [4] extension, [5] - MD5
-// 					if matches[3] != "up" && matches[3] != "down" || matches == nil {
-// 						// if matches == nil {
-// 						continue
-// 					} else if len(matches) == 6 {
-
-// 						path, prefix, ext := matches[1], matches[2], matches[4]
-// 						downFileNameDir := fmt.Sprintf("%s/%s.down.%s", path, prefix, ext)
-// 						mu.Lock()
-// 						results[downFileNameDir] = matches[5]
-// 						mu.Unlock()
-// 					} else if len(matches) != 6 {
-// 						fmt.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
-// 					}
-// 					break
-// 				}
-// 			}
-// 		}(entry.Name())
-// 	}
-
-// 	wg.Wait()
-// 	return results, nil
-// }
