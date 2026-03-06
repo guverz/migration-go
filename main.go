@@ -232,7 +232,7 @@ func migrationList(dir string) error {
 	// missedIncludesCnt := 0
 	// deletedIncludesCnt := 0
 	t0 := time.Now()
-	var migrationIncludes []string
+	migrationIncludes := make(map[string]string)
 	// pathFileMd5 := make(map[string]string)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -299,19 +299,34 @@ func migrationList(dir string) error {
 
 				upName := prefix + ".up." + ext
 				downName := prefix + ".down." + ext
+				filePathUp := filepath.Join(simPath, upName)
+				filePathDown := filepath.Join(simPath, downName)
+				// include, err := parseIncludeFile(simPath, upName)
+				// if err != nil {
+				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
+				// }
 
-				include, err := parseIncludeFile(simPath, upName)
-				if err != nil {
+				// for _, el := range include {
+				// 	if _, exists := migrationIncludes[el]; !exists {
+				// 		migrationIncludes[el] = true
+				// 	}
+				// }
+				if err := parseIncludeFileMap(filePathUp, migrationIncludes); err != nil {
+					return fmt.Errorf("parseIncludeFile error: %w", err)
+				}
+				if err := parseIncludeFileMap(filePathDown, migrationIncludes); err != nil {
 					return fmt.Errorf("parseIncludeFile error: %w", err)
 				}
 
-				include, err = parseIncludeFile(simPath, downName)
-				if err != nil {
-					return fmt.Errorf("parseIncludeFile error: %w", err)
-				}
-				if include != "" {
-					migrationIncludes = append(migrationIncludes, include)
-				}
+				// include, err = parseIncludeFile(simPath, downName)
+				// if err != nil {
+				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
+				// }
+				// for _, el := range include {
+				// 	if _, exists := migrationIncludes[el]; !exists {
+				// 		migrationIncludes[el] = true
+				// 	}
+				// }
 
 				rslt, err := findFileViaPath(simPath, downName)
 				if err != nil {
@@ -344,71 +359,29 @@ func migrationList(dir string) error {
 		}
 
 	}
-	for _, el := range migrationIncludes {
+	for el := range migrationIncludes {
 		fmt.Println(el)
 	}
 	fmt.Println(time.Since(t0))
 	return nil
 }
 
-// not sure if parseInclude should search the dir for @ or should search the file for @
-func parseIncludeDir(dir string) error {
-	// base := filepath.Base(name)
-	pattern := regexp.MustCompile(`^@([^;]+)`)
-
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("include file doesn't exist: %s", dir)
-		}
-		return fmt.Errorf("can't get file info: %w", err)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("failed to read directory: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// log.Printf("The file %s is a directory - SKIP, In directory - %s", entry.Name(), dir)
-			continue
-		}
-		filePath := filepath.Join(dir, entry.Name())
-		file, err := os.Open(filePath)
-		if err != nil {
-			return fmt.Errorf("Warning: cannot open file %s: %w", filePath, err)
-		}
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Text()
-			matches := pattern.FindStringSubmatch(line)
-			if matches == nil {
-				// log.Printf("Wrong line: '%s' in the file '%s' in the dir '%s'.", line, file.Name(), dir)
-				continue
-			}
-			log.Printf("Found '%s' in file '%s'", matches[0], entry.Name())
-		}
-	}
-
-	return nil
-}
-
-func parseIncludeFile(dir, base string) (string, error) {
+func parseIncludeFile(dir, base string) ([]string, error) {
+	rslt := []string{}
 	included := make(map[string]bool)
 	pattern := regexp.MustCompile(`^@([^;]+)`)
 
 	filePath := filepath.Join(dir, base)
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("File doesn't exist: %s", filePath)
+			return rslt, fmt.Errorf("File doesn't exist: %s", filePath)
 		}
-		return "", fmt.Errorf("can't get file info: %w", err)
+		return rslt, fmt.Errorf("can't get file info: %w", err)
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("Warning: cannot open file %s: %w", filePath, err)
+		return rslt, fmt.Errorf("Warning: cannot open file %s: %w", filePath, err)
 	}
 	defer file.Close()
 
@@ -422,16 +395,58 @@ func parseIncludeFile(dir, base string) (string, error) {
 		}
 		// checking if new include has already added to map, if not it adds new incldue
 		if _, exists := included[matches[0]]; !exists {
+
 			included[matches[0]] = true
+			// log.Printf("Found '%s' in file '%s'", matches[0][1:], file.Name())
+			rslt = append(rslt, matches[0][1:])
 		}
 		// it can return multiple matches, maybe this fuction should have a pointer to slice in order to append matches to it
-		// log.Printf("Found '%s' in file '%s'", matches[0], entry.Name())
+
 		// kinda expecting to do it recursive the same way the bash script did
 		// parseIncludeFile(filepath.Dir(matches[0][1:]), filepath.Base(matches[0][1:]))
-		return matches[0][1:], nil
 	}
 
-	return "", nil
+	return rslt, nil
+}
+
+func parseIncludeFileMap(filePath string, included map[string]string) error {
+	pattern := regexp.MustCompile(`^@([^;]+)`)
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file doesn't exist: %s", filePath)
+		}
+		return fmt.Errorf("cannot open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if !strings.HasPrefix(line, "@") {
+			continue
+		}
+
+		matches := pattern.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+
+		include := matches[1] //getting rid of @
+		// checking if new include has already added to map, if not it adds new incldue
+		if parent, exists := included[include]; exists && filePath != parent {
+			return fmt.Errorf("include loop detected %s included by %s already included by %s", include, filePath, parent)
+		} else {
+			included[include] = filePath
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading file %s: %w", filePath, err)
+	}
+
+	return nil
 }
 
 func findFileViaPath(path string, fileName string) (bool, error) {
