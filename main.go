@@ -25,7 +25,7 @@ commands:
         collect        collect migrations on submodules between commits into migrations catalog
         check          check unregistered migrations files at submodules`
 	MiniHelpDir  = "migration.template.sql"
-	MigrationDir = "./test2/migrations"
+	MigrationDir = "./test/migrations"
 	IncludeHelp  = true
 )
 
@@ -261,16 +261,18 @@ func migrationList(dir string) error {
 		downFileName := fmt.Sprintf("%s.down.%s", prefix, ext)
 
 		if _, exists := fileMap[downFileName]; !exists {
+			// probably should return fmt.Errorf instead of log & continue (?)
 			log.Printf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
+			continue
 		}
 
 		fileDirUp := filepath.Join(dir, entry.Name())
 		fileDirDown := filepath.Join(dir, entry.Name())
-		// log.Printf("UP %s", fileDirUp)
+
 		if err := parseIncludes(fileDirUp, parsed, parsing, parent); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
-		// log.Printf("DOWN %s", fileDirDown)
+
 		if err := parseIncludes(fileDirDown, parsed, parsing, parent); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
@@ -282,6 +284,7 @@ func migrationList(dir string) error {
 		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
@@ -301,6 +304,7 @@ func migrationList(dir string) error {
 				// check for meta in the migration file
 				matches := ListPattern.FindStringSubmatch(fileName)
 				if matches == nil {
+					// probably should return err instead of log & continue (?)
 					log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
 					continue
 				}
@@ -308,103 +312,85 @@ func migrationList(dir string) error {
 				ext := matches[2]
 				prefix := matches[1]
 
-				simDir := filepath.Join(filepath.Dir(MigrationDir), path)
+				metaDir := filepath.Join(filepath.Dir(MigrationDir), path)
 
-				upName := prefix + ".up." + ext
-				downName := prefix + ".down." + ext
-				// fileDirUp := filepath.Join(simDir, upName)
-				// fileDirDown := filepath.Join(simDir, downName)
-				// log.Printf("UP %s, DOWN %s", fileDirUp, fileDirDown)
+				metaUpName := prefix + ".up." + ext
+				metaDownName := prefix + ".down." + ext
+				metaFileDirUp := filepath.Join(metaDir, metaUpName)
+				metaFileDirDown := filepath.Join(metaDir, metaDownName)
+				// log.Printf("UP %s, DOWN %s refered by %s", metaFileDirUp, metaFileDirDown, file.Name())
 
-				rslt, err := findFileViaDir(simDir, downName)
-				if err != nil {
-					log.Printf("findFileViaDir error: %s", err)
-				}
-				if !rslt {
-					fmt.Printf("down-file %s not found in %s\n", downName, simDir)
-					rslt, err = findFileViaDir(simDir, upName)
-					if err != nil {
-						log.Printf("findFileViaDir error: %s", err)
-					}
-					if !rslt {
-						fileInfo, err := os.Stat(simDir)
+				if rslt, err := findFileViaDir(metaFileDirDown); err != nil {
+					return fmt.Errorf("findFileViaDir error: %w", err)
+				} else if !rslt {
+					if rslt, err = findFileViaDir(metaFileDirUp); err != nil {
+						return fmt.Errorf("findFileViaDir error: %w", err)
+					} else if !rslt {
+						log.Printf("migration %s does not have based migration file %s", file.Name(), metaUpName)
+						fileInfo, err := os.Stat(fileDirUp)
 						if err != nil {
 							if os.IsNotExist(err) {
-								return fmt.Errorf("file doesn't exist: %s", simDir)
+								return fmt.Errorf("file doesn't exist: %s", fileDirUp)
 							}
 							return fmt.Errorf("can't get file info: %w", err)
 						}
 
 						if !fileInfo.Mode().IsRegular() {
-							return fmt.Errorf("%s is not a regual file (it is %s)", simDir, fileInfo.Mode())
+							return fmt.Errorf("%s is not a regual file (it is %s)", fileDirDown, fileInfo.Mode())
 						}
-						// also add check if name argument is a regular file
-						// os.Remove(filepath.Join(simPath, upName))
+						log.Printf("delete %s\n", fileDirUp)
+						// os.Remove(fileDirUp)
+
+						fileInfo, err = os.Stat(fileDirDown)
+						if err != nil {
+							if os.IsNotExist(err) {
+								return fmt.Errorf("file doesn't exist: %s", fileDirDown)
+							}
+							return fmt.Errorf("can't get file info: %w", err)
+						}
+
+						if !fileInfo.Mode().IsRegular() {
+							return fmt.Errorf("%s is not a regual file (it is %s)", fileDirDown, fileInfo.Mode())
+						}
+						log.Printf("delete %s\n", fileDirDown)
+						// os.Remove(fileDirDown)
+
+					} else {
+						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir)
+					}
+				} else {
+					if rslt, err = findFileViaDir(metaFileDirUp); err != nil {
+						return fmt.Errorf("findFileViaDir error: %w", err)
+					} else if !rslt {
+						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir)
 					}
 				}
 				break
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
 
 	}
-	for el, el2 := range parent {
-		fmt.Printf("include %s, included by %s\n", el, el2)
-	}
+	// for include, included := range parent {
+	// 	fmt.Printf("include %s, included by %s\n", include, included)
+	// }
 	fmt.Println(time.Since(t0))
 	return nil
 }
 
-func parseIncludeDirMap(fileDir string, included map[string]string) error {
-	file, err := os.Open(fileDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("file doesn't exist: %s", fileDir)
-		}
-		return fmt.Errorf("cannot open file %s: %w", fileDir, err)
-	}
-	defer file.Close()
+func findFileViaDir(fileDir string) (bool, error) {
+	path := filepath.Dir(fileDir)
+	base := filepath.Base(fileDir)
 
-	dir := filepath.Dir(fileDir)
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if !strings.HasPrefix(line, "@") {
-			continue
-		}
-
-		matches := IncludePattern.FindStringSubmatch(line)
-		if matches == nil {
-			continue
-		}
-
-		include := matches[1] //getting rid of @
-		includeDir := filepath.Join(dir, include)
-
-		// checking if new include has already added to map, if not it adds new incldue
-		if parent, exists := included[includeDir]; exists && fileDir != parent {
-			return fmt.Errorf("include loop detected %s included by %s already included by %s", includeDir, fileDir, parent)
-		}
-		included[includeDir] = fileDir
-		//recurse
-
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading file %s: %w", fileDir, err)
-	}
-
-	return nil
-}
-
-func findFileViaDir(path string, fileName string) (bool, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return false, fmt.Errorf("failed to read directory %s: %v", path, err)
 	}
 
 	for _, entry := range entries {
-		if entry.Name() == fileName {
+		if entry.Name() == base {
 			return true, nil
 		}
 	}
@@ -412,7 +398,6 @@ func findFileViaDir(path string, fileName string) (bool, error) {
 }
 
 func parseIncludes(fileDir string, visited, stack map[string]bool, parent map[string]string) error {
-
 	if stack[fileDir] {
 		return fmt.Errorf("include loop detected at %s", fileDir)
 	}
