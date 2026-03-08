@@ -23,9 +23,9 @@ options:
 commands:
         add            add new migrations script with properly defined name
         collect        collect migrations on submodules between commits into migrations catalog
-        check          check unregtistered migrations files at submodules`
+        check          check unregistered migrations files at submodules`
 	MiniHelpDir  = "migration.template.sql"
-	MigrationDir = "./test/migrations"
+	MigrationDir = "./test2/migrations"
 	IncludeHelp  = true
 )
 
@@ -232,15 +232,11 @@ func collect() {
 }
 
 func migrationList(dir string) error {
-
-	visited := make(map[string]bool)
-	stack := make(map[string]bool)
-
+	parent := make(map[string]string)
 	// missedIncludesCnt := 0
 	// deletedIncludesCnt := 0
 	t0 := time.Now()
-	migrationIncludes := make(map[string]string)
-	// pathFileMd5 := make(map[string]string)
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("failed to read directory %s: %v", dir, err)
@@ -252,6 +248,10 @@ func migrationList(dir string) error {
 	}
 
 	for _, entry := range entries {
+		// declaring maps for parseIncludes func
+		parsed := make(map[string]bool)
+		parsing := make(map[string]bool)
+
 		matches := ListPattern.FindStringSubmatch(entry.Name())
 		if len(matches) != 3 {
 			continue
@@ -261,11 +261,21 @@ func migrationList(dir string) error {
 		downFileName := fmt.Sprintf("%s.down.%s", prefix, ext)
 
 		if _, exists := fileMap[downFileName]; !exists {
-			log.Printf("missing down file for up file: %s)", entry.Name())
+			log.Printf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
 		}
 
-		fileDir := filepath.Join(dir, entry.Name())
-		file, err := os.Open(fileDir)
+		fileDirUp := filepath.Join(dir, entry.Name())
+		fileDirDown := filepath.Join(dir, entry.Name())
+		// log.Printf("UP %s", fileDirUp)
+		if err := parseIncludes(fileDirUp, parsed, parsing, parent); err != nil {
+			return fmt.Errorf("parseIncludes error: %w", err)
+		}
+		// log.Printf("DOWN %s", fileDirDown)
+		if err := parseIncludes(fileDirDown, parsed, parsing, parent); err != nil {
+			return fmt.Errorf("parseIncludes error: %w", err)
+		}
+
+		file, err := os.Open(fileDirUp)
 		if err != nil {
 			return err
 		}
@@ -288,7 +298,7 @@ func migrationList(dir string) error {
 				// }
 				fileName := filepath.Base(pathFileName)
 				path := filepath.Dir(pathFileName)
-
+				// check for meta in the migration file
 				matches := ListPattern.FindStringSubmatch(fileName)
 				if matches == nil {
 					log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
@@ -302,43 +312,9 @@ func migrationList(dir string) error {
 
 				upName := prefix + ".up." + ext
 				downName := prefix + ".down." + ext
-				fileDirUp := filepath.Join(simDir, upName)
-				fileDirDown := filepath.Join(simDir, downName)
-
-				// include, err := parseIncludeFile(simPath, upName)
-				// if err != nil {
-				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
-				// }
-
-				// for _, el := range include {
-				// 	if _, exists := migrationIncludes[el]; !exists {
-				// 		migrationIncludes[el] = true
-				// 	}
-				// }
-
-				// if err := parseIncludeDirMap(fileDirUp, migrationIncludes); err != nil {
-				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
-				// }
-				// if err := parseIncludeDirMap(fileDirDown, migrationIncludes); err != nil {
-				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
-				// }
-
-				if err := parseIncludes(fileDirUp, visited, stack); err != nil {
-					return fmt.Errorf("parseIncludes error: %w", err)
-				}
-				if err := parseIncludes(fileDirDown, visited, stack); err != nil {
-					return fmt.Errorf("parseIncludes error: %w", err)
-				}
-
-				// include, err = parseIncludeFile(simPath, downName)
-				// if err != nil {
-				// 	return fmt.Errorf("parseIncludeFile error: %w", err)
-				// }
-				// for _, el := range include {
-				// 	if _, exists := migrationIncludes[el]; !exists {
-				// 		migrationIncludes[el] = true
-				// 	}
-				// }
+				// fileDirUp := filepath.Join(simDir, upName)
+				// fileDirDown := filepath.Join(simDir, downName)
+				// log.Printf("UP %s, DOWN %s", fileDirUp, fileDirDown)
 
 				rslt, err := findFileViaDir(simDir, downName)
 				if err != nil {
@@ -371,8 +347,8 @@ func migrationList(dir string) error {
 		}
 
 	}
-	for el := range migrationIncludes {
-		fmt.Println(el)
+	for el, el2 := range parent {
+		fmt.Printf("include %s, included by %s\n", el, el2)
 	}
 	fmt.Println(time.Since(t0))
 	return nil
@@ -435,26 +411,25 @@ func findFileViaDir(path string, fileName string) (bool, error) {
 	return false, nil
 }
 
-func parseIncludes(filePath string, visited, stack map[string]bool) error {
+func parseIncludes(fileDir string, visited, stack map[string]bool, parent map[string]string) error {
 
-	if stack[filePath] {
-		return fmt.Errorf("include cycle detected at %s", filePath)
+	if stack[fileDir] {
+		return fmt.Errorf("include loop detected at %s", fileDir)
 	}
 
-	if visited[filePath] {
-		log.Printf("file %s has been already visited", filepath.Base(filePath))
+	if visited[fileDir] {
 		return nil
 	}
 
-	stack[filePath] = true
+	stack[fileDir] = true
 
-	file, err := os.Open(filePath)
+	file, err := os.Open(fileDir)
 	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", filePath, err)
+		return fmt.Errorf("cannot open %s: %w", fileDir, err)
 	}
 	defer file.Close()
 
-	dir := filepath.Dir(filePath)
+	dir := filepath.Dir(fileDir)
 
 	scanner := bufio.NewScanner(file)
 
@@ -470,10 +445,16 @@ func parseIncludes(filePath string, visited, stack map[string]bool) error {
 			continue
 		}
 
-		include := m[1]
-		includePath := filepath.Join(dir, include)
-		log.Printf("starts recursion using: %s, %s", includePath, filePath)
-		err := parseIncludes(includePath, visited, stack)
+		include := filepath.Join(dir, m[1])
+
+		if stack[include] {
+			prev := parent[include]
+			return fmt.Errorf("include loop detected %s included by %s already included by %s", include, fileDir, prev)
+		}
+
+		parent[include] = fileDir
+
+		err := parseIncludes(include, visited, stack, parent)
 		if err != nil {
 			return err
 		}
@@ -483,8 +464,8 @@ func parseIncludes(filePath string, visited, stack map[string]bool) error {
 		return err
 	}
 
-	stack[filePath] = false
-	visited[filePath] = true
+	delete(stack, fileDir)
+	visited[fileDir] = true
 
 	return nil
 }
