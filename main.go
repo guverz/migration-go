@@ -34,32 +34,21 @@ var (
 	ListPattern    = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
 )
 
-type MigrationMeta struct {
-	Prefix          string
-	Ext             string
-	Dir             string
-	UpFile          string
-	DownFile        string
-	IsFromSubmodule bool
-	OriginalPath    string
-	MD5             string
-	ProjectName     string
+type ProjectMigrations struct {
+	Prefix       string
+	MD5          string
+	Ext          string
+	Dir          string
+	UpFileName   string
+	DownFileName string
 }
 
-type MigrationPair struct {
-	Prefix      string
-	Ext         string
-	Dir         string
-	UpFile      string
-	DownFile    string
-	ProjectName string
-	ModulePath  string // Путь к модулю, если это подмодуль
-}
-
-type IncludeInfo struct {
-	IncludingFile string
-	IncludedFile  string
-	MD5           string
+type ModuleMigrations struct {
+	Prefix       string
+	Ext          string
+	Dir          string
+	UpFileName   string
+	DownFileName string
 }
 
 func main() {
@@ -232,7 +221,8 @@ func collect() {
 }
 
 func migrationList(dir string) error {
-	parent := make(map[string]string)
+	migrationIncludes := make(map[string]string)
+	originalIncludes := make(map[string]string)
 	// missedIncludesCnt := 0
 	// deletedIncludesCnt := 0
 	t0 := time.Now()
@@ -257,8 +247,9 @@ func migrationList(dir string) error {
 			continue
 		}
 
-		prefix, ext := matches[1], matches[2]
-		downFileName := fmt.Sprintf("%s.down.%s", prefix, ext)
+		filePrefix, fileExt := matches[1], matches[2]
+		downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
+		// upFileName := entry.Name()
 
 		if _, exists := fileMap[downFileName]; !exists {
 			// probably should return fmt.Errorf instead of log & continue (?)
@@ -269,11 +260,11 @@ func migrationList(dir string) error {
 		fileDirUp := filepath.Join(dir, entry.Name())
 		fileDirDown := filepath.Join(dir, entry.Name())
 
-		if err := parseIncludes(fileDirUp, parsed, parsing, parent); err != nil {
+		if err := parseIncludes(fileDirUp, parsed, parsing, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
-		if err := parseIncludes(fileDirDown, parsed, parsing, parent); err != nil {
+		if err := parseIncludes(fileDirDown, parsed, parsing, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
@@ -323,37 +314,23 @@ func migrationList(dir string) error {
 				if rslt, err := findFileViaDir(metaFileDirDown); err != nil {
 					return fmt.Errorf("findFileViaDir error: %w", err)
 				} else if !rslt {
+
 					if rslt, err = findFileViaDir(metaFileDirUp); err != nil {
 						return fmt.Errorf("findFileViaDir error: %w", err)
 					} else if !rslt {
 						log.Printf("migration %s does not have based migration file %s", file.Name(), metaUpName)
-						fileInfo, err := os.Stat(fileDirUp)
-						if err != nil {
-							if os.IsNotExist(err) {
-								return fmt.Errorf("file doesn't exist: %s", fileDirUp)
-							}
-							return fmt.Errorf("can't get file info: %w", err)
+						// WARNING dangerous operation, check fileDirUp is not zero and this is a regular file
+						if fileInfo, err := os.Stat(fileDirUp); err == nil && fileInfo.Mode().IsRegular() {
+							log.Printf("delete %s\n", fileDirUp)
+							// os.Remove(fileDirUp)
 						}
 
-						if !fileInfo.Mode().IsRegular() {
-							return fmt.Errorf("%s is not a regual file (it is %s)", fileDirDown, fileInfo.Mode())
+						// WARNING dangerous operation, check fileDirDown is not zero and this is a regular file
+						if fileInfo, err := os.Stat(fileDirDown); err == nil && fileInfo.Mode().IsRegular() {
+							log.Printf("delete %s\n", fileDirDown)
+							// os.Remove(fileDirDown)
 						}
-						log.Printf("delete %s\n", fileDirUp)
-						// os.Remove(fileDirUp)
-
-						fileInfo, err = os.Stat(fileDirDown)
-						if err != nil {
-							if os.IsNotExist(err) {
-								return fmt.Errorf("file doesn't exist: %s", fileDirDown)
-							}
-							return fmt.Errorf("can't get file info: %w", err)
-						}
-
-						if !fileInfo.Mode().IsRegular() {
-							return fmt.Errorf("%s is not a regual file (it is %s)", fileDirDown, fileInfo.Mode())
-						}
-						log.Printf("delete %s\n", fileDirDown)
-						// os.Remove(fileDirDown)
+						continue
 
 					} else {
 						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir)
@@ -365,7 +342,28 @@ func migrationList(dir string) error {
 						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir)
 					}
 				}
-				break
+
+				// temp := ProjectMigrations{
+				// 	Prefix: prefix,
+				// 	MD5: md5,
+				// 	Ext: ext,
+				// 	Dir: metaDir,
+				// 	UpFileName: metaUpName,
+				// 	DownFileName: metaDownName,
+				// }
+				// temp2 := ModuleMigrations{
+				// 	Prefix: filePrefix,
+				// 	Ext: fileExt,
+				// 	Dir: dir,
+				// 	UpFileName: upFileName,
+				// 	DownFileName: downFileName,
+				// }
+				if err := parseIncludes(metaFileDirDown, parsed, parsing, originalIncludes); err != nil {
+					return fmt.Errorf("parseIncludes error: %w", err)
+				}
+				if err := parseIncludes(metaFileDirUp, parsed, parsing, originalIncludes); err != nil {
+					return fmt.Errorf("parseIncludes error: %w", err)
+				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -373,9 +371,13 @@ func migrationList(dir string) error {
 		}
 
 	}
-	// for include, included := range parent {
-	// 	fmt.Printf("include %s, included by %s\n", include, included)
-	// }
+	for include, included := range migrationIncludes {
+		fmt.Printf("include %s, included by %s\n", include, included)
+	}
+	log.Printf("migrationINcludes ends, originalIncludes starts\n")
+	for include, included := range originalIncludes {
+		fmt.Printf("include %s, included by %s\n", include, included)
+	}
 	fmt.Println(time.Since(t0))
 	return nil
 }
