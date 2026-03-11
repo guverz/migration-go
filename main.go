@@ -435,7 +435,12 @@ func parseIncludes(fileDir string, state map[string]int, parent map[string]strin
 
 	case visiting:
 		prev := parent[fileDir]
-		return fmt.Errorf("include loop detected %s included by %s already included by %s", fileDir, parent[fileDir], prev)
+		return fmt.Errorf(
+			"include loop detected %s included by %s already included by %s",
+			fileDir,
+			parent[fileDir],
+			prev,
+		)
 
 	case done:
 		return nil
@@ -465,15 +470,9 @@ func parseIncludes(fileDir string, state map[string]int, parent map[string]strin
 			continue
 		}
 
-		includeName := m[1]
-		includeDir := filepath.Join(dir, includeName)
+		includeDir := filepath.Join(dir, m[1])
 
-		if state[includeDir] == visiting {
-			prev := parent[includeName]
-			return fmt.Errorf("include loop detected %s included by %s already included by %s", includeName, fileDir, prev)
-		}
-
-		parent[includeName] = fileDir
+		parent[includeDir] = fileDir
 
 		if err := parseIncludes(includeDir, state, parent); err != nil {
 			return err
