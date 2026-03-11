@@ -34,6 +34,12 @@ var (
 	ListPattern    = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
 )
 
+var (
+	unvisited = 0
+	visiting  = 1
+	done      = 2
+)
+
 type ProjectMigrations struct {
 	Prefix       string
 	MD5          string
@@ -221,10 +227,12 @@ func collect() {
 }
 
 func migrationList(dir string) error {
-	migrationIncludes := make(map[string]string)
-	originalIncludes := make(map[string]string)
+
 	// missedIncludesCnt := 0
 	// deletedIncludesCnt := 0
+	// deletedIncludes := make(map[string]string)
+	migrationIncludes := make(map[string]string)
+	originalIncludes := make(map[string]string)
 	t0 := time.Now()
 
 	entries, err := os.ReadDir(dir)
@@ -239,8 +247,7 @@ func migrationList(dir string) error {
 
 	for _, entry := range entries {
 		// declaring maps for parseIncludes func
-		parsed := make(map[string]bool)
-		parsing := make(map[string]bool)
+		state := make(map[string]int)
 
 		matches := ListPattern.FindStringSubmatch(entry.Name())
 		if len(matches) != 3 {
@@ -260,11 +267,11 @@ func migrationList(dir string) error {
 		fileDirUp := filepath.Join(dir, entry.Name())
 		fileDirDown := filepath.Join(dir, entry.Name())
 
-		if err := parseIncludes(fileDirUp, parsed, parsing, migrationIncludes); err != nil {
+		if err := parseIncludes(fileDirUp, state, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
-		if err := parseIncludes(fileDirDown, parsed, parsing, migrationIncludes); err != nil {
+		if err := parseIncludes(fileDirDown, state, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
@@ -296,7 +303,7 @@ func migrationList(dir string) error {
 				matches := ListPattern.FindStringSubmatch(fileName)
 				if matches == nil {
 					// probably should return err instead of log & continue (?)
-					log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext \n", file.Name())
+					log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name())
 					continue
 				}
 
@@ -321,13 +328,13 @@ func migrationList(dir string) error {
 						log.Printf("migration %s does not have based migration file %s", file.Name(), metaUpName)
 						// WARNING dangerous operation, check fileDirUp is not zero and this is a regular file
 						if fileInfo, err := os.Stat(fileDirUp); err == nil && fileInfo.Mode().IsRegular() {
-							log.Printf("delete %s\n", fileDirUp)
+							log.Printf("delete %s", fileDirUp)
 							// os.Remove(fileDirUp)
 						}
 
 						// WARNING dangerous operation, check fileDirDown is not zero and this is a regular file
 						if fileInfo, err := os.Stat(fileDirDown); err == nil && fileInfo.Mode().IsRegular() {
-							log.Printf("delete %s\n", fileDirDown)
+							log.Printf("delete %s", fileDirDown)
 							// os.Remove(fileDirDown)
 						}
 						continue
@@ -358,12 +365,35 @@ func migrationList(dir string) error {
 				// 	UpFileName: upFileName,
 				// 	DownFileName: downFileName,
 				// }
-				if err := parseIncludes(metaFileDirDown, parsed, parsing, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirDown, state, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
-				if err := parseIncludes(metaFileDirUp, parsed, parsing, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirUp, state, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
+				// migrationMD5Includes := make(map[[16]byte]string)
+				// projectMD5Includes := make(map[[16]byte]string)
+
+				// for include, included := range migrationIncludes {
+				// 	md5Include := md5.Sum([]byte(include))
+				// 	migrationMD5Includes[md5Include] = include
+				// 	projectMD5Includes[md5Include] = include
+				// 	metaInclude := filepath.Join(metaDir, include)
+				// 	// log.Printf("md5 %x of include file %s included by %s and check in original includes at %s", md5Include, include, included, metaDir)
+				// 	if rslt, err := findFileViaDir(metaInclude); err != nil {
+				// 		return fmt.Errorf("findFileViaDir error: %w", err)
+				// 	} else if !rslt {
+				// 		log.Printf("include %s may be deleted from %s, check later", include, metaInclude)
+				// 		deletedIncludes[include] = included
+				// 		deletedIncludesCnt++
+				// 	}
+				// }
+
+				// for include, parent := range originalIncludes {
+				// 	md5Parent := md5.Sum([]byte(parent))
+				// 	tempSlice := strings.Split(parent, "/")
+				// 	includedRelativeFile := tempSlice[len(tempSlice)-1]
+				// }
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -399,16 +429,19 @@ func findFileViaDir(fileDir string) (bool, error) {
 	return false, nil
 }
 
-func parseIncludes(fileDir string, visited, stack map[string]bool, parent map[string]string) error {
-	if stack[fileDir] {
-		return fmt.Errorf("include loop detected at %s", fileDir)
-	}
+func parseIncludes(fileDir string, state map[string]int, parent map[string]string) error {
 
-	if visited[fileDir] {
+	switch state[fileDir] {
+
+	case visiting:
+		prev := parent[fileDir]
+		return fmt.Errorf("include loop detected %s included by %s already included by %s", fileDir, parent[fileDir], prev)
+
+	case done:
 		return nil
 	}
 
-	stack[fileDir] = true
+	state[fileDir] = visiting
 
 	file, err := os.Open(fileDir)
 	if err != nil {
@@ -432,17 +465,17 @@ func parseIncludes(fileDir string, visited, stack map[string]bool, parent map[st
 			continue
 		}
 
-		include := filepath.Join(dir, m[1])
+		includeName := m[1]
+		includeDir := filepath.Join(dir, includeName)
 
-		if stack[include] {
-			prev := parent[include]
-			return fmt.Errorf("include loop detected %s included by %s already included by %s", include, fileDir, prev)
+		if state[includeDir] == visiting {
+			prev := parent[includeName]
+			return fmt.Errorf("include loop detected %s included by %s already included by %s", includeName, fileDir, prev)
 		}
 
-		parent[include] = fileDir
+		parent[includeName] = fileDir
 
-		err := parseIncludes(include, visited, stack, parent)
-		if err != nil {
+		if err := parseIncludes(includeDir, state, parent); err != nil {
 			return err
 		}
 	}
@@ -451,8 +484,6 @@ func parseIncludes(fileDir string, visited, stack map[string]bool, parent map[st
 		return err
 	}
 
-	delete(stack, fileDir)
-	visited[fileDir] = true
-
+	state[fileDir] = done
 	return nil
 }
