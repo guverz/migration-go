@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"flag"
 	"fmt"
 	"log"
@@ -228,11 +229,12 @@ func collect() {
 
 func migrationList(dir string) error {
 
-	// missedIncludesCnt := 0
-	// deletedIncludesCnt := 0
-	// deletedIncludes := make(map[string]string)
-	migrationIncludes := make(map[string]string)
-	originalIncludes := make(map[string]string)
+	missedIncludesCnt := 0
+	deletedIncludesCnt := 0
+	missedIncludes := make(map[string]string)
+	deletedIncludes := make(map[string]string)
+	// migrationIncludes := make(map[string]string)
+	// originalIncludes := make(map[string]string)
 	t0 := time.Now()
 
 	entries, err := os.ReadDir(dir)
@@ -248,6 +250,8 @@ func migrationList(dir string) error {
 	for _, entry := range entries {
 		// declaring maps for parseIncludes func
 		state := make(map[string]int)
+		migrationIncludes := make(map[string]string)
+		originalIncludes := make(map[string]string)
 
 		matches := ListPattern.FindStringSubmatch(entry.Name())
 		if len(matches) != 3 {
@@ -267,11 +271,11 @@ func migrationList(dir string) error {
 		fileDirUp := filepath.Join(dir, entry.Name())
 		fileDirDown := filepath.Join(dir, entry.Name())
 
-		if err := parseIncludes(fileDirUp, state, migrationIncludes); err != nil {
+		if err := parseIncludes(fileDirUp, "", state, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
-		if err := parseIncludes(fileDirDown, state, migrationIncludes); err != nil {
+		if err := parseIncludes(fileDirDown, "", state, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
 		}
 
@@ -365,49 +369,83 @@ func migrationList(dir string) error {
 				// 	UpFileName: upFileName,
 				// 	DownFileName: downFileName,
 				// }
-				if err := parseIncludes(metaFileDirDown, state, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirDown, "", state, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
-				if err := parseIncludes(metaFileDirUp, state, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirUp, "", state, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
-				// migrationMD5Includes := make(map[[16]byte]string)
-				// projectMD5Includes := make(map[[16]byte]string)
+				migrationMD5Includes := make(map[[16]byte]string)
+				projectMD5Includes := make(map[[16]byte]string)
 
-				// for include, included := range migrationIncludes {
-				// 	md5Include := md5.Sum([]byte(include))
-				// 	migrationMD5Includes[md5Include] = include
-				// 	projectMD5Includes[md5Include] = include
-				// 	metaInclude := filepath.Join(metaDir, include)
-				// 	// log.Printf("md5 %x of include file %s included by %s and check in original includes at %s", md5Include, include, included, metaDir)
-				// 	if rslt, err := findFileViaDir(metaInclude); err != nil {
-				// 		return fmt.Errorf("findFileViaDir error: %w", err)
-				// 	} else if !rslt {
-				// 		log.Printf("include %s may be deleted from %s, check later", include, metaInclude)
-				// 		deletedIncludes[include] = included
-				// 		deletedIncludesCnt++
-				// 	}
-				// }
+				for include, included := range migrationIncludes {
+					md5Include, err := FileMD5(include)
+					if err != nil {
+						return fmt.Errorf("FileMD5 error: %w", err)
+					}
+					migrationMD5Includes[md5Include] = include
+					projectMD5Includes[md5Include] = include
+					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
+					if err != nil {
+						return err
+					}
+					metaInclude := filepath.Join(metaDir, includeDir)
+					// log.Printf("created MD5 %x of include %s", md5Include, include)
+					// log.Printf("md5 %x of include file %s included by %s and check in original includes at %s", md5Include, include, included, metaDir)
+					if rslt, err := findFileViaDir(metaInclude); err != nil {
+						return fmt.Errorf("findFileViaDir error: %w", err)
+					} else if !rslt {
+						log.Printf("include %s may be deleted from %s, check later", include, metaInclude)
+						deletedIncludes[include] = included
+						deletedIncludesCnt++
+					}
 
-				// for include, parent := range originalIncludes {
-				// 	md5Parent := md5.Sum([]byte(parent))
-				// 	tempSlice := strings.Split(parent, "/")
-				// 	includedRelativeFile := tempSlice[len(tempSlice)-1]
-				// }
+				}
+
+				for md5, include := range migrationMD5Includes {
+					log.Printf("LIST MD5 %x, Include %s\n", md5, include)
+				}
+
+				for include, included := range originalIncludes {
+					md5Include, err := FileMD5(include)
+					if err != nil {
+						return fmt.Errorf("FileMD5 error: %w", err)
+					}
+					// tempSlice := strings.Split(include, "/")
+					// includedRelativeFile := tempSlice[len(tempSlice)-1]
+					if _, exists := migrationMD5Includes[md5Include]; !exists {
+						if _, exists := missedIncludes[include]; !exists {
+							log.Printf("MD5 %x of include %s is not present in migrationMD5Includes", md5Include, include)
+							// log.Printf("include file %s is changed or not exists in migration includes", include)
+							missedIncludesCnt++
+							missedIncludes[include] = included
+						} else {
+							log.Printf("MD5 %x of include %s is present in migrationMD5Includes but it was already in missedIncludes", md5Include, include)
+						}
+
+					} else {
+						log.Printf("MD5 %x of include %s is present in migrationMD5Includes", md5Include, include)
+					}
+				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
 			return err
 		}
+		log.Printf("File %s has been processed", entry.Name())
+	}
 
-	}
-	for include, included := range migrationIncludes {
-		fmt.Printf("include %s, included by %s\n", include, included)
-	}
-	log.Printf("migrationINcludes ends, originalIncludes starts\n")
-	for include, included := range originalIncludes {
-		fmt.Printf("include %s, included by %s\n", include, included)
-	}
+	// for include, included := range migrationIncludes {
+	// 	fmt.Printf("include %s, included by %s\n", include, included)
+	// }
+	// log.Printf("migrationINcludes ends, originalIncludes starts\n")
+	// for include, included := range originalIncludes {
+	// 	md5, err := FileMD5(included)
+	// 	if err != nil {
+	// 		return fmt.Errorf("filemd5 err: %w", err)
+	// 	}
+	// 	fmt.Printf("md5 included: '%x' include %s, included by %s\n", md5, include, included)
+	// }
 	fmt.Println(time.Since(t0))
 	return nil
 }
@@ -429,20 +467,13 @@ func findFileViaDir(fileDir string) (bool, error) {
 	return false, nil
 }
 
-func parseIncludes(fileDir string, state map[string]int, parent map[string]string) error {
+func parseIncludes(fileDir string, current string, state map[string]int, parent map[string]string) error {
 
-	switch state[fileDir] {
+	if state[fileDir] == visiting {
+		return fmt.Errorf("include loop detected %s included by %s already included by %s", fileDir, current, parent[fileDir])
+	}
 
-	case visiting:
-		prev := parent[fileDir]
-		return fmt.Errorf(
-			"include loop detected %s included by %s already included by %s",
-			fileDir,
-			parent[fileDir],
-			prev,
-		)
-
-	case done:
+	if state[fileDir] == done {
 		return nil
 	}
 
@@ -455,7 +486,6 @@ func parseIncludes(fileDir string, state map[string]int, parent map[string]strin
 	defer file.Close()
 
 	dir := filepath.Dir(fileDir)
-
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
@@ -469,12 +499,13 @@ func parseIncludes(fileDir string, state map[string]int, parent map[string]strin
 		if m == nil {
 			continue
 		}
+		includeName := m[1]
+		includeDir := filepath.Join(dir, includeName)
+		if _, exists := parent[includeDir]; !exists {
+			parent[includeDir] = fileDir
+		}
 
-		includeDir := filepath.Join(dir, m[1])
-
-		parent[includeDir] = fileDir
-
-		if err := parseIncludes(includeDir, state, parent); err != nil {
+		if err := parseIncludes(includeDir, fileDir, state, parent); err != nil {
 			return err
 		}
 	}
@@ -485,4 +516,12 @@ func parseIncludes(fileDir string, state map[string]int, parent map[string]strin
 
 	state[fileDir] = done
 	return nil
+}
+
+func FileMD5(path string) ([16]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return [16]byte{}, err
+	}
+	return md5.Sum(data), nil
 }
