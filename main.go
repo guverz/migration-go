@@ -249,6 +249,7 @@ func migrationList(dir string) error {
 
 	for _, entry := range entries {
 		// declaring maps for parseIncludes func
+		metaState := make(map[string]int)
 		state := make(map[string]int)
 		migrationIncludes := make(map[string]string)
 		originalIncludes := make(map[string]string)
@@ -269,7 +270,7 @@ func migrationList(dir string) error {
 		}
 
 		fileDirUp := filepath.Join(dir, entry.Name())
-		fileDirDown := filepath.Join(dir, entry.Name())
+		fileDirDown := filepath.Join(dir, downFileName)
 
 		if err := parseIncludes(fileDirUp, "", state, migrationIncludes); err != nil {
 			return fmt.Errorf("parseIncludes error: %w", err)
@@ -369,10 +370,10 @@ func migrationList(dir string) error {
 				// 	UpFileName: upFileName,
 				// 	DownFileName: downFileName,
 				// }
-				if err := parseIncludes(metaFileDirDown, "", state, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirDown, "", metaState, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
-				if err := parseIncludes(metaFileDirUp, "", state, originalIncludes); err != nil {
+				if err := parseIncludes(metaFileDirUp, "", metaState, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
 				migrationMD5Includes := make(map[[16]byte]string)
@@ -402,9 +403,9 @@ func migrationList(dir string) error {
 
 				}
 
-				for md5, include := range migrationMD5Includes {
-					log.Printf("LIST MD5 %x, Include %s\n", md5, include)
-				}
+				// for md5, include := range migrationMD5Includes {
+				// 	log.Printf("LIST MD5 %x, Include %s\n", md5, include)
+				// }
 
 				for include, included := range originalIncludes {
 					md5Include, err := FileMD5(include)
@@ -424,7 +425,7 @@ func migrationList(dir string) error {
 						}
 
 					} else {
-						log.Printf("MD5 %x of include %s is present in migrationMD5Includes", md5Include, include)
+						// log.Printf("MD5 %x of include %s is present in migrationMD5Includes", md5Include, include)
 					}
 				}
 			}
@@ -432,7 +433,7 @@ func migrationList(dir string) error {
 		if err := scanner.Err(); err != nil {
 			return err
 		}
-		log.Printf("File %s has been processed", entry.Name())
+		// log.Printf("File %s has been processed", entry.Name())
 	}
 
 	// for include, included := range migrationIncludes {

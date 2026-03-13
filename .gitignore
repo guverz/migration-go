@@ -2,4 +2,3 @@
 describe.sh
 /test
 migration.sh
-migration.template.sql
