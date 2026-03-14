@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,17 +131,19 @@ func version() {
 	fmt.Println(Version)
 }
 
-func describe(arg string) (string, error) {
+func describe(dir, arg string) (string, error) {
 	cmd := exec.Command("version", arg)
+	cmd.Dir = dir
+
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to run version %v, %v", arg, err)
+		return "", fmt.Errorf("failed to run version %v in %v: %w", dir, arg, err)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
 
 func add() error {
-	baseName, err := describe("full")
+	baseName, err := describe(MigrationDir, "full")
 	if err != nil {
 		return fmt.Errorf("failed to get git repo information")
 	}
@@ -233,6 +236,8 @@ func migrationList(dir string) error {
 	deletedIncludesCnt := 0
 	missedIncludes := make(map[string]string)
 	deletedIncludes := make(map[string]string)
+	moduleIncludes := make(map[string]string)
+	projectIncludes := make(map[string]string)
 	// migrationIncludes := make(map[string]string)
 	// originalIncludes := make(map[string]string)
 	t0 := time.Now()
@@ -287,10 +292,11 @@ func migrationList(dir string) error {
 		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
-
+		foundMetaFlag := false
 		for scanner.Scan() {
 			line := scanner.Text()
 			if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
+				foundMetaFlag = true
 				meta = strings.TrimSpace(meta)
 
 				parts := strings.SplitN(meta, ";", 2)
@@ -420,33 +426,56 @@ func migrationList(dir string) error {
 							// log.Printf("include file %s is changed or not exists in migration includes", include)
 							missedIncludesCnt++
 							missedIncludes[include] = included
-						} else {
-							log.Printf("MD5 %x of include %s is present in migrationMD5Includes but it was already in missedIncludes", md5Include, include)
 						}
-
 					} else {
-						// log.Printf("MD5 %x of include %s is present in migrationMD5Includes", md5Include, include)
+						moduleIncludes[include] = included
 					}
 				}
+
 			}
 		}
+		// if meta is undefined, migration file is original file
+		if !foundMetaFlag {
+			// ogFileMD5Up, err = FileMD5(fileDirUp)
+			// if err != nil {
+			// 	return fmt.Errorf("FileMD5 error: %w", err)
+			// }
+			// ogFileMD5Down, err := FileMD5(fileDirDown)
+			// if err != nil {
+			// 	return fmt.Errorf("FileMD5 error: %w", err)
+			// }
+			// projectMigrations line that uses ogFileMD5Up|Down
+			// projectMigrations log line
+			maps.Copy(projectIncludes, migrationIncludes)
+		}
 		if err := scanner.Err(); err != nil {
-			return err
+			return fmt.Errorf("Scanner error: %w", err)
 		}
 		// log.Printf("File %s has been processed", entry.Name())
 	}
-
-	// for include, included := range migrationIncludes {
-	// 	fmt.Printf("include %s, included by %s\n", include, included)
-	// }
-	// log.Printf("migrationINcludes ends, originalIncludes starts\n")
-	// for include, included := range originalIncludes {
-	// 	md5, err := FileMD5(included)
-	// 	if err != nil {
-	// 		return fmt.Errorf("filemd5 err: %w", err)
-	// 	}
-	// 	fmt.Printf("md5 included: '%x' include %s, included by %s\n", md5, include, included)
-	// }
+	// getting submodule dir
+	submoduleDir, err := getSubmoduleDir(MigrationDir)
+	MigrationDirName := filepath.Base(MigrationDir)
+	if err != nil {
+		return err
+	}
+	for _, submodule := range submoduleDir {
+		submoduleProject := ""
+		entries, err := os.ReadDir(submodule)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.Name() == MigrationDirName {
+				submoduleProject, err = describe(submodule, "project")
+				if err != nil {
+					return err
+				}
+				log.Printf("That submodule %s has a name of %s", submodule, submoduleProject)
+				// log.Printf("That entry %s has a migration dir", submodule)
+			}
+		}
+	}
 	fmt.Println(time.Since(t0))
 	return nil
 }
@@ -525,4 +554,29 @@ func FileMD5(path string) ([16]byte, error) {
 		return [16]byte{}, err
 	}
 	return md5.Sum(data), nil
+}
+
+func getSubmoduleDir(path string) ([]string, error) {
+	rslt := []string{}
+	outerDir := filepath.Dir(path)
+	submoduleDir := filepath.Join(outerDir, ".gitmodules")
+	f, err := os.Open(submoduleDir)
+	if err != nil {
+		return nil, fmt.Errorf("Error opening .gitmodules: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if after, ok := strings.CutPrefix(line, "path ="); ok {
+			path := strings.TrimSpace(after)
+			rslt = append(rslt, filepath.Join(outerDir, path))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("Scanner error: %w", err)
+	}
+	return rslt, nil
 }
