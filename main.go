@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/md5"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -304,10 +305,14 @@ func migrationList(dir string) error {
 					continue
 				}
 				pathFileName := parts[0]
-				// md5 := ""
-				// if len(parts) == 2 {
-				// 	md5 = parts[1]
-				// }
+				md5 := [32]byte{}
+				if len(parts) == 2 {
+					decoded, err := hex.DecodeString(parts[1])
+					if err != nil {
+						return fmt.Errorf("Error decoding MD5 string in meta: %w")
+					}
+					copy(md5[:], decoded)
+				}
 				fileName := filepath.Base(pathFileName)
 				path := filepath.Dir(pathFileName)
 				// check for meta in the migration file
@@ -436,14 +441,18 @@ func migrationList(dir string) error {
 		}
 		// if meta is undefined, migration file is original file
 		if !foundMetaFlag {
-			// ogFileMD5Up, err = FileMD5(fileDirUp)
-			// if err != nil {
-			// 	return fmt.Errorf("FileMD5 error: %w", err)
-			// }
-			// ogFileMD5Down, err := FileMD5(fileDirDown)
-			// if err != nil {
-			// 	return fmt.Errorf("FileMD5 error: %w", err)
-			// }
+			ogFileMD5Up, err := FileMD5(fileDirUp)
+			if err != nil {
+				return fmt.Errorf("FileMD5 error: %w", err)
+			}
+			ogFileMD5Down, err := FileMD5(fileDirDown)
+			if err != nil {
+				return fmt.Errorf("FileMD5 error: %w", err)
+			}
+
+			var ogFileMD5UpDown [32]byte
+			copy(ogFileMD5UpDown[0:16], ogFileMD5Up[:])
+			copy(ogFileMD5UpDown[16:32], ogFileMD5Down[:])
 			// projectMigrations line that uses ogFileMD5Up|Down
 			// projectMigrations log line
 			maps.Copy(projectIncludes, migrationIncludes)
@@ -454,27 +463,90 @@ func migrationList(dir string) error {
 		// log.Printf("File %s has been processed", entry.Name())
 	}
 	// getting submodule dir
-	submoduleDir, err := getSubmoduleDir(MigrationDir)
+	submoduleDirSlice, err := getSubmoduleDir(MigrationDir)
 	MigrationDirName := filepath.Base(MigrationDir)
 	if err != nil {
 		return err
 	}
-	for _, submodule := range submoduleDir {
+	for _, submoduleDir := range submoduleDirSlice {
 		submoduleProject := ""
-		entries, err := os.ReadDir(submodule)
+		submoduleMigration := filepath.Join(submoduleDir, MigrationDirName)
+		entries, err := os.ReadDir(submoduleMigration)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			} else {
+				return err
+			}
+		}
+		submoduleProject, err = getProject(submoduleDir)
 		if err != nil {
 			return err
 		}
+		// log.Printf("That submodule %s has a name of %s", submodule, submoduleProject)
+
+		fileMap := make(map[string]bool, len(entries))
 		for _, entry := range entries {
-			if entry.Name() == MigrationDirName {
-				submoduleProject, err = describe(submodule, "project")
-				if err != nil {
-					return err
-				}
-				log.Printf("That submodule %s has a name of %s", submodule, submoduleProject)
-				// log.Printf("That entry %s has a migration dir", submodule)
-			}
+			fileMap[entry.Name()] = true
 		}
+
+		for _, entry := range entries {
+			matches := ListPattern.FindStringSubmatch(entry.Name())
+			if len(matches) != 3 {
+				continue
+			}
+
+			filePrefix, fileExt := matches[1], matches[2]
+
+			upFileName := entry.Name()
+			var downFileName string
+
+			if !strings.HasPrefix(upFileName, submoduleProject) {
+				log.Printf("file not started with project name: %s", submoduleProject)
+				base := strings.TrimSuffix(upFileName, ".up.sql")
+				upFileName = fmt.Sprintf("%s.up.%s", base, fileExt)
+				downFileName = fmt.Sprintf("%s.down.%s", base, fileExt)
+			} else {
+				downFileName = fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
+			}
+
+			fileDirUp := filepath.Join(submoduleMigration, upFileName)
+			fileDirDown := filepath.Join(submoduleMigration, downFileName)
+
+			md5SubmoduleUp, err := FileMD5(fileDirUp)
+			if err != nil {
+				return fmt.Errorf("FileMD5 error: %w", err)
+			}
+			md5SubmoduleDown, err := FileMD5(fileDirDown)
+			if err != nil {
+				return fmt.Errorf("FileMD5 error: %w", err)
+			}
+			var md5SubmoduleUpDown [32]byte
+			copy(md5SubmoduleUpDown[0:16], md5SubmoduleUp[:])
+			copy(md5SubmoduleUpDown[16:32], md5SubmoduleDown[:])
+
+			if _, exists := fileMap[downFileName]; !exists {
+				// probably should return fmt.Errorf instead of log & continue (?)
+				log.Printf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
+				continue
+			}
+
+		}
+
+		// entries, err := os.ReadDir(submodule)
+		// if err != nil {
+		// 	return err
+		// }
+		// for _, entry := range entries {
+		// 	if entry.Name() == MigrationDirName {
+		// 		submoduleProject, err = describe(submodule, "project")
+		// 		if err != nil {
+		// 			return err
+		// 		}
+		// 		log.Printf("That submodule %s has a name of %s", submodule, submoduleProject)
+		// 		// log.Printf("That entry %s has a migration dir", submodule)
+		// 	}
+		// }
 	}
 	fmt.Println(time.Since(t0))
 	return nil
@@ -579,4 +651,67 @@ func getSubmoduleDir(path string) ([]string, error) {
 		return nil, fmt.Errorf("Scanner error: %w", err)
 	}
 	return rslt, nil
+}
+
+// bad function no clue how to parse otherwise ddl directory, also not sure about describe function using version-go
+func getProject(repoPath string) (string, error) {
+	if rslt := strings.Contains(repoPath, "ddl"); rslt {
+		baseDescribe, err := describe(MigrationDir, "project")
+		if err != nil {
+			return "", err
+		}
+		baseSplit := strings.SplitN(baseDescribe, "-", 2)
+		if len(baseSplit) != 2 {
+			return "", fmt.Errorf("Can't work with ddl directory")
+		}
+		base := baseSplit[0]
+		stringRslt := (base + "-ddl")
+		return stringRslt, nil
+	}
+	configPath := filepath.Join(repoPath, ".git", "config")
+
+	f, err := os.Open(configPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+
+	inOrigin := false
+	var url string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == `[remote "origin"]` {
+			inOrigin = true
+			continue
+		}
+
+		if strings.HasPrefix(line, "[") {
+			inOrigin = false
+		}
+
+		if inOrigin && strings.HasPrefix(line, "url") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				url = strings.TrimSpace(parts[1])
+				break
+			}
+		}
+	}
+
+	if url == "" {
+		return "", fmt.Errorf("origin url not found at path %s", repoPath)
+	}
+
+	if i := strings.Index(url, ":"); i != -1 {
+		url = url[i+1:]
+	}
+
+	url = strings.ReplaceAll(url, "/", "-")
+	url = strings.TrimSuffix(url, ".git")
+
+	return url, nil
 }
