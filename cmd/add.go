@@ -81,15 +81,15 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 }
 
 func add() error {
-	project, err := Describe("project")
+	project, err := Describe(MigrationDir, "project")
 	if err != nil {
 		log.Fatal(err)
 	}
-	version, err := Describe("version")
+	version, err := Describe(MigrationDir, "version")
 	if err != nil {
 		log.Fatal(err)
 	}
-	release, err := Describe("release")
+	release, err := Describe(MigrationDir, "release")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -116,11 +116,13 @@ func add() error {
 	return nil
 }
 
-func Describe(arg string) (string, error) {
+func Describe(dir, arg string) (string, error) {
 	cmd := exec.Command("version", arg)
+	cmd.Dir = dir
+
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to run version %v, %v", arg, err)
+		return "", fmt.Errorf("failed to run version %v in %v: %w", dir, arg, err)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
