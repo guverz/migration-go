@@ -33,14 +33,14 @@ commands:
 )
 
 var (
-	IncludePattern = regexp.MustCompile(`^@([^;]+)`)
-	ListPattern    = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+	IncludePattern    = regexp.MustCompile(`^@([^;]+)`)
+	ListPattern       = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+	ValidationPattern = regexp.MustCompile(`^(.+)\.(up|down)\.sql$`)
 )
 
 var (
-	unvisited = 0
-	visiting  = 1
-	done      = 2
+	visiting = 1
+	done     = 2
 )
 
 type Meta struct {
@@ -49,6 +49,11 @@ type Meta struct {
 	Dir          string
 	UpFileName   string
 	DownFileName string
+}
+
+type ListResults struct {
+	MissedFilesCnt   int
+	MissedMigrations map[string]Meta
 }
 
 func main() {
@@ -213,8 +218,19 @@ func CreateMigrationFiles(dir, baseName string, includeHelp bool) error {
 }
 
 func check() {
-	if err := migrationList(MigrationDir); err != nil {
+	rslt := &ListResults{}
+	if err := migrationList(MigrationDir, rslt); err != nil {
 		log.Printf("error migrationList: %s", err)
+	}
+	if rslt.MissedFilesCnt != 0 {
+		log.Printf("there is unregistered migration files pairs %d, collect them and commit:", rslt.MissedFilesCnt)
+		for _, file := range rslt.MissedMigrations {
+			log.Print(file.Prefix + ".up|down." + file.Ext)
+		}
+		log.Print("do: scripts/migration collect")
+	}
+	if err := migrationValidation(MigrationDir); err != nil {
+		log.Printf("error migration validation: %s", err)
 	}
 }
 
@@ -222,8 +238,9 @@ func collect() {
 	fmt.Println("collect_temp")
 }
 
-func migrationList(dir string) error {
-	missedFilesCnt := 0
+func migrationList(dir string, rslt *ListResults) error {
+	rslt.MissedFilesCnt = 0
+	// missedFilesCnt := 0
 	missedIncludesCnt := 0
 	deletedIncludesCnt := 0
 
@@ -232,7 +249,8 @@ func migrationList(dir string) error {
 	moduleIncludes := make(map[string]string)
 	projectIncludes := make(map[string]string)
 
-	missedMigrations := make(map[string]Meta)
+	rslt.MissedMigrations = make(map[string]Meta)
+	// missedMigrations := make(map[string]Meta)
 	projectMigrations := make(map[[32]byte]Meta)
 	moduleMigrations := make(map[[32]byte]Meta)
 
@@ -367,10 +385,13 @@ func migrationList(dir string) error {
 					UpFileName:   metaUpName,
 					DownFileName: metaDownName,
 				}
-
-				if projectMigrations[md5].Dir == "test\\roam-cdr\\migrations" {
-					log.Printf("roam-cdr md5: %x, meta: %+v, referenced by %s", md5, projectMigrations[md5], file.Name())
-				}
+				// if projectMigrations[md5].Dir == "test\\roam-cdr\\migrations" {
+				// 	log.Printf("meta roam-cdr %s, referenced by %s", projectMigrations[md5].Prefix, file.Name())
+				// 	// log.Printf("roam-cdr md5: %x, meta: %+v, referenced by %s", md5, projectMigrations[md5], file.Name())
+				// } else {
+				// 	// log.Printf("md5: %x, meta: %+v, referenced by %s", md5, projectMigrations[md5], file.Name())
+				// 	log.Printf("meta index: %s, referenced by %s", projectMigrations[md5].Prefix, file.Name())
+				// }
 
 				moduleMigrations[md5] = Meta{
 					Prefix:       filePrefix,
@@ -446,7 +467,6 @@ func migrationList(dir string) error {
 			var ogFileMD5UpDown [32]byte
 			copy(ogFileMD5UpDown[0:16], ogFileMD5Up[:])
 			copy(ogFileMD5UpDown[16:32], ogFileMD5Down[:])
-
 			projectMigrations[ogFileMD5UpDown] = Meta{
 				Prefix:       filePrefix,
 				Ext:          fileExt,
@@ -454,6 +474,8 @@ func migrationList(dir string) error {
 				UpFileName:   upFileName,
 				DownFileName: downFileName,
 			}
+			// log.Printf("NO META md5: %x, meta: %+v, referenced by %s", ogFileMD5UpDown, projectMigrations[ogFileMD5UpDown], file.Name())
+			// log.Printf("NO META meta: %s, referenced by %s", projectMigrations[ogFileMD5UpDown].Prefix, file.Name())
 			maps.Copy(projectIncludes, migrationIncludes)
 		}
 		if err := scanner.Err(); err != nil {
@@ -528,15 +550,15 @@ func migrationList(dir string) error {
 			// log.Printf("MD5: %x, Prefix: %s, Ext: %s, Dir: %s, UpFile: %s, DownFile: %s", md5SubmoduleUpDown, filePrefix, fileExt, submoduleMigration, upFileName, downFileName)
 
 			if _, exists := projectMigrations[md5SubmoduleUpDown]; !exists {
-				missedMigrations[upFileName] = Meta{
+				rslt.MissedMigrations[upFileName] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          submoduleMigration,
 					UpFileName:   upFileName,
 					DownFileName: downFileName,
 				}
-				missedFilesCnt++
-				log.Printf("Missed migrations file name: %s, Meta: %+v", upFileName, missedMigrations[upFileName])
+				rslt.MissedFilesCnt++
+				// log.Printf("Missed migrations file name: %s, Meta: %+v", upFileName, rslt.MissedMigrations[upFileName])
 			}
 		}
 	}
@@ -710,4 +732,95 @@ func getProject(repoPath string) (string, error) {
 	url = strings.TrimSuffix(url, ".git")
 
 	return url, nil
+}
+
+func migrationValidation(path string) error {
+	wrongFilesCnt := 0
+	migrations := make(map[string]string)
+	migrationIncludes := make(map[string]string)
+	state := make(map[string]int)
+
+	var files []string
+
+	err := filepath.WalkDir(path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		if strings.HasSuffix(path, "README.md") || strings.HasSuffix(path, ".txt") {
+			return nil
+		}
+
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		fileName := filepath.Base(file)
+		// md5 seems to be unsused in the function itself
+		// md5, err := FileMD5(fileDir)
+		// if err != nil {
+		// 	return fmt.Errorf("Error getting MD5 of file: %s, Error: %w", matches[0], err)
+		// }
+		migrations[fileName] = file
+		if ValidationPattern.MatchString(fileName) {
+			if err := parseIncludes(file, "", state, migrationIncludes); err != nil {
+				return fmt.Errorf("Error parsing Includes of %s, Error: %w", fileName, err)
+			}
+		}
+	}
+	// entries, err := os.ReadDir(path)
+	// if err != nil {
+	// 	return fmt.Errorf("Error reading dir: %w, using path: %s", err, path)
+	// }
+	// for _, entry := range entries {
+	// 	matches := ValidationPattern.FindStringSubmatch(entry.Name())
+	// 	if len(matches) != 3 || matches == nil {
+	// 		continue
+	// 	}
+	// 	fileDir := filepath.Join(path, entry.Name())
+	// 	migrations[entry.Name()] = fileDir
+	// 	// md5 seems to be unsused in the function itself
+	// 	// md5, err := FileMD5(fileDir)
+	// 	// if err != nil {
+	// 	// 	return fmt.Errorf("Error getting MD5 of file: %s, Error: %w", matches[0], err)
+	// 	// }
+	// 	if err := parseIncludes(fileDir, "", state, migrationIncludes); err != nil {
+	// 		return fmt.Errorf("Error parsing Includes of %s, Error: %w", matches[0], err)
+	// 	}
+	// }
+	for fileName, fileDir := range migrations {
+		relative := strings.TrimPrefix(fileDir, path+"/")
+		matches := ValidationPattern.FindStringSubmatch(fileName)
+		if matches == nil {
+			if _, exists := migrationIncludes[relative]; !exists {
+				fmt.Printf("ERROR: %s wrong suffix\n", fileName)
+				wrongFilesCnt++
+			}
+			continue
+		}
+
+		prefix := matches[1]
+		suffix := matches[2]
+
+		var counterpart string
+		if suffix == "up" {
+			counterpart = prefix + ".down.sql"
+		} else {
+			counterpart = prefix + ".up.sql"
+		}
+		if _, exists := migrations[counterpart]; !exists {
+			log.Printf("ERROR: %s counterpart %s not found\n", fileName, counterpart)
+			wrongFilesCnt++
+		}
+		if wrongFilesCnt > 0 {
+			return fmt.Errorf("there are %d wrong files", wrongFilesCnt)
+		}
+	}
+	return nil
 }
