@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +56,7 @@ func findLastMigrationNumber(dir, baseName string) (int, error) {
 
 func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+		return fmt.Errorf("error creating dir: %w", err)
 	}
 
 	upContent := fmt.Sprintf("# %s.up.sql\n", baseName)
@@ -66,7 +65,7 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 		upContent += GetMiniHelp + "\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, baseName+".up.sql"), []byte(upContent), 0644); err != nil {
-		return err
+		return fmt.Errorf("error writing file: %w", err)
 	}
 
 	downContent := fmt.Sprintf("# %s.down.sql\n", baseName)
@@ -74,7 +73,7 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 		downContent += GetMiniHelp + "\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, baseName+".down.sql"), []byte(downContent), 0644); err != nil {
-		return err
+		return fmt.Errorf("error writing file: %w", err)
 	}
 
 	return nil
@@ -83,15 +82,15 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 func add() error {
 	project, err := Describe(MigrationDir, "project")
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("error describing dir: %w", err)
 	}
 	version, err := Describe(MigrationDir, "version")
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("error describing dir: %w", err)
 	}
 	release, err := Describe(MigrationDir, "release")
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("error describing dir: %w", err)
 	}
 
 	baseName := fmt.Sprintf("%s-%s-%s", project, version, release)

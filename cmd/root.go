@@ -14,13 +14,24 @@ var (
 	MiniHelpDir  string
 	MigrationDir string
 	IncludeHelp  bool
-
+	// Verbose      bool
+	Debug   bool
+	NoColor bool
 	rootCmd = &cobra.Command{
-		Use:     "migration",
-		Short:   "migration cli info short",
-		Long:    `migration cli info long`,
-		Version: "0.1",
+		Use:          "migration",
+		Short:        "migration cli info short",
+		Long:         `migration cli info long`,
+		Version:      "0.1",
+		SilenceUsage: true,
 	}
+)
+
+const (
+	red    = "\033[31m"
+	yellow = "\033[33m"
+	purple = "\033[35m"
+	bold   = "\033[1m"
+	reset  = "\033[0m"
 )
 
 // Execute executes the root command.
@@ -32,7 +43,9 @@ func init() {
 	cobra.OnInitialize(initConfig, loadConfigToConstants)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file is:")
-
+	// rootCmd.Flags().BoolVarP(&Verbose, "verbose", "v", false, "verbose")
+	rootCmd.PersistentFlags().BoolVar(&NoColor, "no-color", false, "no color used logging")
+	rootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "d", false, "debug")
 	rootCmd.Flags().BoolP("version", "V", false, "print script version and exit")
 	rootCmd.Flags().BoolP("help", "h", false, "print this help and exit")
 
@@ -96,4 +109,34 @@ func loadConfigToConstants() {
 	if version := viper.GetString("app.version"); version != "" {
 		rootCmd.Version = version
 	}
+}
+
+func Ld(msg string) {
+	if Debug {
+		fmt.Printf("%s: %s\n",
+			colorize("DEBUG", yellow+bold),
+			colorize(msg, yellow),
+		)
+	}
+}
+
+func Lw(msg string) {
+	fmt.Printf("%s: %s\n",
+		colorize("WARNING", purple),
+		colorize(msg, ""),
+	)
+}
+
+func Le(msg string) {
+	fmt.Fprintf(os.Stderr, "%s: %s\n",
+		colorize("ERROR", red+bold),
+		colorize(msg, red),
+	)
+}
+
+func colorize(s, color string) string {
+	if NoColor {
+		return s
+	}
+	return color + s + reset
 }
