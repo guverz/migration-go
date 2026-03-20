@@ -36,6 +36,7 @@ type Meta struct {
 type ListResults struct {
 	MissedFilesCnt   int
 	MissedMigrations map[string]Meta
+	ModuleMigrations map[[32]byte]Meta
 }
 
 func init() {
@@ -59,7 +60,7 @@ func check() error {
 	}
 
 	if rslt.MissedFilesCnt != 0 {
-		Le(fmt.Sprintf("there are unregistered migration files pairs %d, collect them and commit:", rslt.MissedFilesCnt))
+		Le(fmt.Sprintf("there are unregistered migration files pairs (%d), collect them and commit:", rslt.MissedFilesCnt))
 		for _, file := range rslt.MissedMigrations {
 			fmt.Println(file.Prefix + ".up|down." + file.Ext)
 		}
@@ -83,7 +84,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 
 	rslt.MissedMigrations = make(map[string]Meta)
 	projectMigrations := make(map[[32]byte]Meta)
-	moduleMigrations := make(map[[32]byte]Meta)
+	rslt.ModuleMigrations = make(map[[32]byte]Meta)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -180,10 +181,10 @@ func MigrationList(dir string, rslt *ListResults) error {
 				metaFileDirDown := filepath.Join(metaDir, metaDownName)
 				// log.Printf("UP %s, DOWN %s refered by %s", metaFileDirUp, metaFileDirDown, file.Name())
 
-				if rslt, err := findFileViaDir(metaFileDirDown); err != nil {
+				if rslt, err := FindFileViaDir(metaFileDirDown); err != nil {
 					return fmt.Errorf("findFileViaDir error: %w", err)
 				} else if !rslt {
-					if rslt, err = findFileViaDir(metaFileDirUp); err != nil {
+					if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
 						return fmt.Errorf("findFileViaDir error: %w", err)
 					} else if !rslt {
 						Le(fmt.Sprintf("migration %s does not have based migration file %s", file.Name(), metaUpName))
@@ -204,7 +205,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir)
 					}
 				} else {
-					if rslt, err = findFileViaDir(metaFileDirUp); err != nil {
+					if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
 						return fmt.Errorf("findFileViaDir error: %w", err)
 					} else if !rslt {
 						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir)
@@ -227,7 +228,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 					DownFileName: metaDownName,
 				}
 
-				moduleMigrations[md5] = Meta{
+				rslt.ModuleMigrations[md5] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          dir,
@@ -265,7 +266,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 					)
 					// check if file exists in directory of
 					metaInclude := filepath.Join(metaDir, includeDir)
-					if rslt, err := findFileViaDir(metaInclude); err != nil {
+					if rslt, err := FindFileViaDir(metaInclude); err != nil {
 						return fmt.Errorf("findFileViaDir error: %w", err)
 					} else if !rslt {
 						Le(fmt.Sprintf("include %s may be deleted from %s, check later", include, metaInclude))
@@ -428,7 +429,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 	return nil
 }
 
-func findFileViaDir(fileDir string) (bool, error) {
+func FindFileViaDir(fileDir string) (bool, error) {
 	path := filepath.Dir(fileDir)
 	base := filepath.Base(fileDir)
 
