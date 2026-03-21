@@ -67,6 +67,25 @@ func collect() error {
 
 					Lw(fmt.Sprintf("pair %s.up|down.%s update migration %s.up|down.$%s", meta.Prefix, meta.Ext, moduleMeta.Prefix, moduleMeta.Ext))
 					break
+				} else {
+					originalIncludes := make(map[string]string)
+					state := make(map[string]int)
+					if err := ParseIncludes(upFileDir, "", state, originalIncludes); err != nil {
+						return fmt.Errorf("error ParseIncludes: %w", err)
+					}
+					if err := ParseIncludes(downFileDir, "", state, originalIncludes); err != nil {
+						return fmt.Errorf("error ParseIncludes: %w", err)
+					}
+					if err := Add(false); err != nil {
+						return fmt.Errorf("error Add: %w", err)
+					}
+					// full, err := Describe(MigrationDir, "full")
+					// if err != nil {
+					// 	return fmt.Errorf("error Describe: %w", err)
+					// }
+					// if _, lastMigration, err := FindLastMigrationInfo(MigrationDir, full); err != nil {
+					// 	return fmt.Errorf("error FindLastMigrationInfo: %w", err)
+					// }
 				}
 			}
 		}

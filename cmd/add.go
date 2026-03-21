@@ -20,18 +20,20 @@ var addCmd = &cobra.Command{
 	Use:   "add",
 	Short: "temp",
 	Long:  `temp`,
-	Run: func(cmd *cobra.Command, args []string) {
-		add()
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return Add(IncludeHelp)
 	},
 }
 
-func findLastMigrationNumber(dir, baseName string) (int, error) {
+// pattern should be only up file
+func FindLastMigrationInfo(dir, baseName string) (int, string, error) {
 	pattern := regexp.MustCompile(fmt.Sprintf(`^%s-(\d+)\.(up|down)\.sql$`, regexp.QuoteMeta(baseName)))
 	var maxNum int
+	var lastFile string
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read directory %s: %v", dir, err)
+		return 0, "", fmt.Errorf("failed to read directory %s: %v", dir, err)
 	}
 
 	for _, entry := range entries {
@@ -47,11 +49,12 @@ func findLastMigrationNumber(dir, baseName string) (int, error) {
 			}
 			if num > maxNum {
 				maxNum = num
+				lastFile = entry.Name()
 			}
 		}
 	}
 
-	return maxNum, nil
+	return maxNum, lastFile, nil
 }
 
 func createMigrationFiles(dir, baseName string, includeHelp bool) error {
@@ -79,7 +82,7 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 	return nil
 }
 
-func add() error {
+func Add(includeFlag bool) error {
 	project, err := Describe(MigrationDir, "project")
 	if err != nil {
 		return fmt.Errorf("error describing dir: %w", err)
@@ -97,14 +100,14 @@ func add() error {
 
 	fmt.Printf("Add migration script %s\n", baseName)
 
-	increment, err := findLastMigrationNumber(MigrationDir, baseName)
+	increment, _, err := FindLastMigrationInfo(MigrationDir, baseName)
 	if err != nil {
 		return fmt.Errorf("failed to find last migration: %v", err)
 	}
 	increment++
 
 	migrationFile := fmt.Sprintf("%s-%d", baseName, increment)
-	err = createMigrationFiles(MigrationDir, migrationFile, IncludeHelp)
+	err = createMigrationFiles(MigrationDir, migrationFile, includeFlag)
 	if err != nil {
 		return fmt.Errorf("failed to create migration files: %v", err)
 	}
