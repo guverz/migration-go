@@ -34,9 +34,16 @@ type Meta struct {
 }
 
 type ListResults struct {
-	MissedFilesCnt   int
-	MissedMigrations map[string]Meta
-	ModuleMigrations map[[32]byte]Meta
+	DeletedIncludesCnt int
+	MissedIncludesCnt  int
+	MissedFilesCnt     int
+	MissedMigrations   map[string]Meta
+	ModuleMigrations   map[[32]byte]Meta
+	ProjectIncludes    map[string]string
+	ModuleIncludes     map[string]string
+	MissedIncludes     map[string]string
+	DeletedIncludes    map[string]string
+	ProjectMD5Includes map[[16]byte]string
 }
 
 func init() {
@@ -72,19 +79,18 @@ func check() error {
 	return nil
 }
 
-func MigrationList(dir string, rslt *ListResults) error {
-	rslt.MissedFilesCnt = 0
-	missedIncludesCnt := 0
-	deletedIncludesCnt := 0
+func MigrationList(dir string, rslts *ListResults) error {
+	rslts.MissedIncludesCnt = 0
+	rslts.DeletedIncludesCnt = 0
 
-	missedIncludes := make(map[string]string)
-	deletedIncludes := make(map[string]string)
-	moduleIncludes := make(map[string]string)
-	projectIncludes := make(map[string]string)
+	rslts.MissedIncludes = make(map[string]string)
+	rslts.DeletedIncludes = make(map[string]string)
+	rslts.ModuleIncludes = make(map[string]string)
+	rslts.ProjectIncludes = make(map[string]string)
 
-	rslt.MissedMigrations = make(map[string]Meta)
-	projectMigrations := make(map[[32]byte]Meta)
-	rslt.ModuleMigrations = make(map[[32]byte]Meta)
+	projectMigrations := make(map[[32]byte]Meta) // seems to be used by sole function
+
+	rslts.ModuleMigrations = make(map[[32]byte]Meta)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -228,7 +234,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 					DownFileName: metaDownName,
 				}
 
-				rslt.ModuleMigrations[md5] = Meta{
+				rslts.ModuleMigrations[md5] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          dir,
@@ -242,8 +248,9 @@ func MigrationList(dir string, rslt *ListResults) error {
 				if err := ParseIncludes(metaFileDirUp, "", metaState, originalIncludes); err != nil {
 					return fmt.Errorf("parseIncludes error: %w", err)
 				}
+
 				migrationMD5Includes := make(map[[16]byte]string)
-				projectMD5Includes := make(map[[16]byte]string)
+				rslts.ProjectMD5Includes = make(map[[16]byte]string)
 
 				// build md5 includes from migrations includes
 				for include, included := range migrationIncludes {
@@ -252,7 +259,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 						return fmt.Errorf("FileMD5 error: %w", err)
 					}
 					migrationMD5Includes[md5Include] = include
-					projectMD5Includes[md5Include] = include
+					rslts.ProjectMD5Includes[md5Include] = include
 					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
 					if err != nil {
 						return fmt.Errorf("error getting relative path: %w", err)
@@ -270,8 +277,8 @@ func MigrationList(dir string, rslt *ListResults) error {
 						return fmt.Errorf("findFileViaDir error: %w", err)
 					} else if !rslt {
 						Le(fmt.Sprintf("include %s may be deleted from %s, check later", include, metaInclude))
-						deletedIncludes[include] = included
-						deletedIncludesCnt++
+						rslts.DeletedIncludes[include] = included
+						rslts.DeletedIncludesCnt++
 					}
 
 				}
@@ -283,13 +290,13 @@ func MigrationList(dir string, rslt *ListResults) error {
 					}
 					Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in migration_includes", md5Include, include, included))
 					if _, exists := migrationMD5Includes[md5Include]; !exists {
-						if _, exists := missedIncludes[include]; !exists {
+						if _, exists := rslts.MissedIncludes[include]; !exists {
 							Lw(fmt.Sprintf("include file %s is changed or not exists in migration includes", include))
-							missedIncludesCnt++
-							missedIncludes[include] = included
+							rslts.MissedIncludesCnt++
+							rslts.MissedIncludes[include] = included
 						}
 					} else {
-						moduleIncludes[include] = included
+						rslts.ModuleIncludes[include] = included
 					}
 				}
 
@@ -327,7 +334,7 @@ func MigrationList(dir string, rslt *ListResults) error {
 				downFileName),
 			)
 
-			maps.Copy(projectIncludes, migrationIncludes)
+			maps.Copy(rslts.ProjectIncludes, migrationIncludes)
 		}
 		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("scanner error: %w", err)
@@ -335,6 +342,9 @@ func MigrationList(dir string, rslt *ListResults) error {
 	}
 
 	// list submodules migrations to find uncollected or changed files
+
+	rslts.MissedFilesCnt = 0
+	rslts.MissedMigrations = make(map[string]Meta)
 
 	// getting submodule dir
 	submoduleDirSlice, err := getSubmoduleDir(MigrationDir)
@@ -414,14 +424,14 @@ func MigrationList(dir string, rslt *ListResults) error {
 			)
 
 			if _, exists := projectMigrations[md5SubmoduleUpDown]; !exists {
-				rslt.MissedMigrations[upFileName] = Meta{
+				rslts.MissedMigrations[upFileName] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          submoduleMigration,
 					UpFileName:   upFileName,
 					DownFileName: downFileName,
 				}
-				rslt.MissedFilesCnt++
+				rslts.MissedFilesCnt++
 			}
 		}
 	}

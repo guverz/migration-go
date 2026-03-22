@@ -25,9 +25,8 @@ var addCmd = &cobra.Command{
 	},
 }
 
-// pattern should be only up file
 func FindLastMigrationInfo(dir, baseName string) (int, string, error) {
-	pattern := regexp.MustCompile(fmt.Sprintf(`^%s-(\d+)\.(up|down)\.sql$`, regexp.QuoteMeta(baseName)))
+	pattern := regexp.MustCompile(fmt.Sprintf(`^%s-(\d+)\.up\.sql$`, regexp.QuoteMeta(baseName)))
 	var maxNum int
 	var lastFile string
 
