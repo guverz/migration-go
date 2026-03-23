@@ -38,7 +38,7 @@ type ListResults struct {
 	MissedIncludesCnt  int
 	MissedFilesCnt     int
 	MissedMigrations   map[string]Meta
-	ModuleMigrations   map[[32]byte]Meta
+	ModuleMigrations   map[string]Meta
 	ProjectIncludes    map[string]string
 	ModuleIncludes     map[string]string
 	MissedIncludes     map[string]string
@@ -88,9 +88,9 @@ func MigrationList(dir string, rslts *ListResults) error {
 	rslts.ModuleIncludes = make(map[string]string)
 	rslts.ProjectIncludes = make(map[string]string)
 
-	projectMigrations := make(map[[32]byte]Meta) // seems to be used by sole function
+	projectMigrations := make(map[string]Meta) // seems to be used by sole function
 
-	rslts.ModuleMigrations = make(map[[32]byte]Meta)
+	rslts.ModuleMigrations = make(map[string]Meta)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -157,13 +157,9 @@ func MigrationList(dir string, rslts *ListResults) error {
 					continue
 				}
 				pathFileName := parts[0]
-				md5 := [32]byte{}
+				var md5 string
 				if len(parts) == 2 {
-					decoded, err := hex.DecodeString(parts[1])
-					if err != nil {
-						return fmt.Errorf("error decoding MD5 string in meta: %w", err)
-					}
-					copy(md5[:], decoded)
+					md5 = parts[1]
 				}
 				fileName := filepath.Base(pathFileName)
 				path := filepath.Dir(pathFileName)
@@ -260,11 +256,12 @@ func MigrationList(dir string, rslts *ListResults) error {
 					}
 					migrationMD5Includes[md5Include] = include
 					rslts.ProjectMD5Includes[md5Include] = include
+
 					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
 					if err != nil {
 						return fmt.Errorf("error getting relative path: %w", err)
 					}
-
+					fmt.Println(dir, include, includeDir)
 					Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in original includes at %s",
 						md5Include,
 						include,
@@ -284,6 +281,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 				}
 				// compare includes and fill missed_includes or deleted includes
 				for include, included := range originalIncludes {
+					// relative path could be calculated here but it was found to be obsolete
 					md5Include, err := FileMD5(include)
 					if err != nil {
 						return fmt.Errorf("FileMD5 error: %w", err)
@@ -313,9 +311,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 				return fmt.Errorf("FileMD5 error: %w", err)
 			}
 
-			var ogFileMD5UpDown [32]byte
-			copy(ogFileMD5UpDown[0:16], ogFileMD5Up[:])
-			copy(ogFileMD5UpDown[16:32], ogFileMD5Down[:])
+			md5UpHex := hex.EncodeToString(ogFileMD5Up[:])
+			md5DownHex := hex.EncodeToString(ogFileMD5Down[:])
+
+			ogFileMD5UpDown := md5UpHex + md5DownHex
 
 			projectMigrations[ogFileMD5UpDown] = Meta{
 				Prefix:       filePrefix,
@@ -410,9 +409,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 			if err != nil {
 				return fmt.Errorf("FileMD5 error: %w", err)
 			}
-			var md5SubmoduleUpDown [32]byte
-			copy(md5SubmoduleUpDown[0:16], md5SubmoduleUp[:])
-			copy(md5SubmoduleUpDown[16:32], md5SubmoduleDown[:])
+			md5SubmoduleUpHex := hex.EncodeToString(md5SubmoduleUp[:])
+			md5SubmoduleDownHex := hex.EncodeToString(md5SubmoduleDown[:])
+
+			md5SubmoduleUpDown := md5SubmoduleUpHex + md5SubmoduleDownHex
 
 			Ld(fmt.Sprintf("MD5: %x, Prefix: %s, Ext: %s, Dir: %s, UpFile: %s, DownFile: %s",
 				md5SubmoduleUpDown,

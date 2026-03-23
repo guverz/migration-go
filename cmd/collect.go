@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -131,6 +133,7 @@ func collect() error {
 							Ld(fmt.Sprintf("md5 %x of include %s included by %s and check in migrationIncludes", md5, include, included))
 							if _, exists := rslts.ProjectMD5Includes[md5]; !exists {
 								if _, exists := rslts.MissedIncludes[include]; !exists {
+									Ld(fmt.Sprintf("include file %s is changed or doesn't exist in migration includes", include))
 									rslts.MissedIncludes[include] = included
 									rslts.MissedIncludesCnt++
 								}
@@ -146,14 +149,18 @@ func collect() error {
 					if err != nil {
 						return fmt.Errorf("error FileMD5: %w", err)
 					}
-					var md5UpDown [32]byte
-					copy(md5UpDown[0:16], md5Up[:])
-					copy(md5UpDown[16:32], md5Down[:])
+					md5UpHex := hex.EncodeToString(md5Up[:])
+					md5DownHex := hex.EncodeToString(md5Down[:])
+
+					md5UpDown := md5UpHex + md5DownHex
 
 					moduleUpFileDir := filepath.Join(moduleMeta.Dir, moduleMeta.UpFileName)
 					moduleDownFileDir := filepath.Join(moduleMeta.Dir, moduleMeta.DownFileName)
 
-					os.WriteFile(upFileDir, []byte(fmt.Sprintf("#migration: %s;%x", meta.UpFileName, md5UpDown)), 0644)
+					if err := os.WriteFile(upFileDir, []byte(fmt.Sprintf("#migration: %s;%x", meta.UpFileName, md5UpDown)), 0644); err != nil {
+						return fmt.Errorf("error writing file: %w", err)
+					}
+
 					data, err := os.ReadFile(upFileDir)
 					if err != nil {
 						return fmt.Errorf("error reading file: %w", err)
@@ -165,7 +172,10 @@ func collect() error {
 					defer file.Close()
 					file.Write(data)
 
-					os.WriteFile(downFileDir, []byte(fmt.Sprintf("#migration: %s;%x", meta.DownFileName, md5UpDown)), 0644)
+					if err := os.WriteFile(downFileDir, []byte(fmt.Sprintf("#migration: %s;%x", meta.DownFileName, md5UpDown)), 0644); err != nil {
+						return fmt.Errorf("error writing file: %w", err)
+					}
+
 					data, err = os.ReadFile(downFileDir)
 					if err != nil {
 						return fmt.Errorf("error reading file: %w", err)
@@ -180,6 +190,30 @@ func collect() error {
 					collectedCnt++
 					collectedCnt++
 				}
+			}
+		}
+	}
+
+	if rslts.MissedIncludesCnt != 0 {
+		fmt.Printf("there is number of missed includes (%d)\n", rslts.MissedIncludesCnt)
+		for include, included := range rslts.MissedIncludes {
+			Ld(fmt.Sprintf("include file %s", include))
+			md5, err := FileMD5(include)
+			if err != nil {
+				return fmt.Errorf("error FileMD5: %w", err)
+			}
+			Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in projectIncludes", md5, include, included))
+			parts := strings.Split(include, string(filepath.Separator))
+			includeRelativeFile := strings.Join(parts[1:], string(filepath.Separator))
+			if rslt, err := FindFileViaDir(includeRelativeFile); err != nil {
+				return fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				if err := os.Mkdir(includeRelativeFile, 0644); err != nil {
+					return fmt.Errorf("error creating dir: %w", err)
+				}
+			}
+			if _, exists := rslts.ProjectIncludes[includeRelativeFile]; exists {
+
 			}
 		}
 	}
