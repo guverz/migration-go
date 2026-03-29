@@ -21,7 +21,8 @@ var addCmd = &cobra.Command{
 	Short: "temp",
 	Long:  `temp`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return Add(IncludeHelp)
+		_, err := Add(IncludeHelp)
+		return err
 	},
 }
 
@@ -81,18 +82,18 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 	return nil
 }
 
-func Add(includeFlag bool) error {
+func Add(includeFlag bool) (string, error) {
 	project, err := Describe(MigrationDir, "project")
 	if err != nil {
-		return fmt.Errorf("error describing dir: %w", err)
+		return "", fmt.Errorf("error describing dir: %w", err)
 	}
 	version, err := Describe(MigrationDir, "version")
 	if err != nil {
-		return fmt.Errorf("error describing dir: %w", err)
+		return "", fmt.Errorf("error describing dir: %w", err)
 	}
 	release, err := Describe(MigrationDir, "release")
 	if err != nil {
-		return fmt.Errorf("error describing dir: %w", err)
+		return "", fmt.Errorf("error describing dir: %w", err)
 	}
 
 	baseName := fmt.Sprintf("%s-%s-%s", project, version, release)
@@ -101,20 +102,20 @@ func Add(includeFlag bool) error {
 
 	increment, _, err := FindLastMigrationInfo(MigrationDir, baseName)
 	if err != nil {
-		return fmt.Errorf("failed to find last migration: %v", err)
+		return "", fmt.Errorf("failed to find last migration: %v", err)
 	}
 	increment++
 
 	migrationFile := fmt.Sprintf("%s-%d", baseName, increment)
 	err = createMigrationFiles(MigrationDir, migrationFile, includeFlag)
 	if err != nil {
-		return fmt.Errorf("failed to create migration files: %v", err)
+		return "", fmt.Errorf("failed to create migration files: %v", err)
 	}
 
 	fmt.Printf("Created migration files:\n   %s/%s.up.sql\n   %s/%s.down.sql\n",
 		MigrationDir, migrationFile, MigrationDir, migrationFile)
 
-	return nil
+	return migrationFile, nil
 }
 
 func Describe(dir, arg string) (string, error) {

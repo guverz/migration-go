@@ -230,7 +230,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 					DownFileName: metaDownName,
 				}
 
-				rslts.ModuleMigrations[md5] = Meta{
+				rslts.ModuleMigrations[prefix] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          dir,
@@ -261,7 +261,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 					if err != nil {
 						return fmt.Errorf("error getting relative path: %w", err)
 					}
-					fmt.Println(dir, include, includeDir)
+					// fmt.Println(dir, include, includeDir)
 					Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in original includes at %s",
 						md5Include,
 						include,
