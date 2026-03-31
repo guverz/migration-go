@@ -32,6 +32,7 @@ const (
 	purple = "\033[35m"
 	bold   = "\033[1m"
 	reset  = "\033[0m"
+	green  = "\033[32m"
 )
 
 // Execute executes the root command.

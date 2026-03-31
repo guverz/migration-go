@@ -196,13 +196,17 @@ func MigrationList(dir string, rslts *ListResults) error {
 						// WARNING dangerous operation, check fileDirUp is not zero and this is a regular file
 						if fileInfo, err := os.Stat(fileDirUp); err == nil && fileInfo.Mode().IsRegular() {
 							Le(fmt.Sprintf("delete %s", fileDirUp))
-							os.Remove(fileDirUp)
+							if err := os.Remove(fileDirUp); err != nil {
+								return fmt.Errorf("failed to remove file: %w", err)
+							}
 						}
 
 						// WARNING dangerous operation, check fileDirDown is not zero and this is a regular file
 						if fileInfo, err := os.Stat(fileDirDown); err == nil && fileInfo.Mode().IsRegular() {
 							Le(fmt.Sprintf("delete %s", fileDirDown))
-							os.Remove(fileDirDown)
+							if err := os.Remove(fileDirDown); err != nil {
+								return fmt.Errorf("failed to remove file: %w", err)
+							}
 						}
 						continue
 
@@ -257,20 +261,23 @@ func MigrationList(dir string, rslts *ListResults) error {
 					if err != nil {
 						return fmt.Errorf("FileMD5 error: %w", err)
 					}
+
 					migrationMD5Includes[md5Include] = include
 					rslts.ProjectMD5Includes[md5Include] = include
 
-					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
-					if err != nil {
-						return fmt.Errorf("error getting relative path: %w", err)
-					}
-					// fmt.Println(dir, include, includeDir)
 					Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in original includes at %s",
 						md5Include,
 						include,
 						included,
 						metaDir),
 					)
+
+					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
+					if err != nil {
+						return fmt.Errorf("error getting relative path: %w", err)
+					}
+					// fmt.Println(dir, include, includeDir)
+
 					// check if file exists in directory of
 					metaInclude := filepath.Join(metaDir, includeDir)
 					if rslt, err := FindFileViaDir(metaInclude); err != nil {
@@ -442,7 +449,6 @@ func MigrationList(dir string, rslts *ListResults) error {
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -674,7 +680,7 @@ func MigrationValidation(path string) error {
 		}
 		Ld(fmt.Sprintf("file %s check if counterpart %s exists", fileName, counterpart))
 		if _, exists := migrations[counterpart]; !exists {
-			Le(fmt.Sprintf("ERROR: %s counterpart %s not found\n", fileName, counterpart))
+			Le(fmt.Sprintf("ERROR: %s counterpart %s not found", fileName, counterpart))
 			wrongFilesCnt++
 		}
 		if wrongFilesCnt > 0 {
