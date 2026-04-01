@@ -30,19 +30,6 @@ func collect() error {
 	if err := MigrationList(MigrationDir, rslts); err != nil {
 		return fmt.Errorf("error MigrationList: %w", err)
 	}
-	// fmt.Println(rslts.MissedFilesCnt, rslts.MissedMigrations)
-	// fmt.Println("ModuleMigrations")
-	// for originalPrefix, module := range rslts.ModuleMigrations {
-	// 	fmt.Printf("Original prefix: %s, Prefix: %s, Dir: %s, UpFile: %s, DownFile: %s\n", originalPrefix, module.Prefix, module.Dir, module.UpFileName, module.DownFileName)
-	// }
-	// fmt.Println("MissedMigrations")
-	// for UpFileName, module := range rslts.MissedMigrations {
-	// 	fmt.Printf("UpFileName: %s, Prefix: %s, Dir: %s, UpFile: %s, DownFile: %s\n", UpFileName, module.Prefix, module.Dir, module.UpFileName, module.DownFileName)
-	// }
-	// fmt.Println("ProjectIncludes")
-	// for include, included := range rslts.ProjectIncludes {
-	// 	fmt.Printf("Include: %s, Included by: %s\n", include, included)
-	// }
 
 	if rslts.MissedFilesCnt != 0 {
 		fmt.Printf("there are unregistered migration files pairs (%d), collect:\n", rslts.MissedFilesCnt)
@@ -63,7 +50,7 @@ func collect() error {
 			}
 			// before check name exists in module_migrations file_prefix=>project_migration_file_pair
 			if migration, exists := rslts.ModuleMigrations[module.Prefix]; exists {
-				// if only update of the migration file requires
+				// if only the update of the migration file is required
 				migrationUpFileDir := filepath.Join(migration.Dir, migration.UpFileName)
 				migrationDownFileDir := filepath.Join(migration.Dir, migration.DownFileName)
 
@@ -143,7 +130,7 @@ func collect() error {
 					}
 				}
 				// strange behaviour: pair ClearingManager-roam-cdr-0.9.7~rc.5-1-1.up|down.sql save migration: .up|down.
-				fmt.Printf("pair %s.up|down.%s save migration: %s.up|down.%s\n", module.Prefix, module.Ext, migration.Prefix, migration.Ext)
+				fmt.Printf("pair %s.up|down.%s updating migration pair: %s.up|down.sql\n", module.Prefix, module.Ext, migrationTemplate)
 			}
 
 			md5Up, err := FileMD5(upFileDir)
@@ -189,9 +176,8 @@ func collect() error {
 
 			// fmt.Printf("copying from %s to %s\n", downFileDir, downFileDir)
 
-			collectedCnt++
-			collectedCnt++
-
+			// updating a pair of migrations
+			collectedCnt = +2
 		}
 	}
 
@@ -200,11 +186,6 @@ func collect() error {
 		// for include, included := range rslts.MissedIncludes {
 		// 	fmt.Printf("include %s included by %s", include, included)
 		// }
-		// if included file is not an original file
-		// if include exists in migration dir but is absent in migration-file then we should update migration-file by copying original migration-file - unrealistic scenario
-		// if include exists in migration dir and is being referenced by migration-file but it's changed so we should update include by copying original include - realistic scenario, works fine
-		// if included file is an original file
-		// if
 		for include, included := range rslts.MissedIncludes {
 			Ld(fmt.Sprintf("include file %s", include))
 			md5, err := FileMD5(include)
@@ -227,7 +208,7 @@ func collect() error {
 			if rslt, err := FindFileViaDir(newIncludeDir); err != nil {
 				return fmt.Errorf("error FindFileViaDir: %w", err)
 			} else if !rslt {
-				if err := os.Mkdir(newIncludeDir, 0644); err != nil {
+				if err := os.Mkdir(newIncludeDir, 0755); err != nil {
 					return fmt.Errorf("error creating dir: %w", err)
 				}
 			}
@@ -246,8 +227,16 @@ func collect() error {
 			} else {
 				fmt.Printf("add include file %s\n", include)
 
-				if err := os.Truncate(newIncludeFile, 0); err != nil {
-					return fmt.Errorf("error zeroing file: %w", err)
+				if exists, err := FindFileViaDir(newIncludeFile); err != nil {
+					return fmt.Errorf("error FindFileViaDir: %w", err)
+				} else if !exists {
+					if err := os.WriteFile(newIncludeFile, []byte{}, 0644); err != nil {
+						return fmt.Errorf("error creating file: %w", err)
+					}
+				} else if exists {
+					if err := os.Truncate(newIncludeFile, 0); err != nil {
+						return fmt.Errorf("error zeroing file: %w", err)
+					}
 				}
 
 				if err := updateMigration(newIncludeFile, include, ""); err != nil {
@@ -269,7 +258,7 @@ func collect() error {
 			if !exists1 && !exists2 {
 				// WARNING: dangerous operation, check before delete
 				if fileInfo, err := os.Stat(include); err == nil && fileInfo.Mode().IsRegular() {
-					Le(fmt.Sprintf("delete include %s", include))
+					Lw(fmt.Sprintf("deleting include %s", include))
 					if err := os.Remove(include); err != nil {
 						return fmt.Errorf("failed to delete: %w", err)
 					}
@@ -277,6 +266,18 @@ func collect() error {
 				}
 			}
 		}
+	}
+	if len(rslts.DeletedFiles) != 0 {
+		for project := range rslts.DeletedFiles {
+			// WARNING dangerous operation, check if migration file is a regular file
+			if fileInfo, err := os.Stat(project); err == nil && fileInfo.Mode().IsRegular() {
+				Lw(fmt.Sprintf("deleting %s", project))
+				if err := os.Remove(project); err != nil {
+					return fmt.Errorf("failed to remove file: %w", err)
+				}
+			}
+		}
+
 	}
 
 	if err := MigrationValidation(MigrationDir); err != nil {
@@ -299,8 +300,9 @@ func collect() error {
 }
 
 func StripDir(fileDir string) string {
-	temp := strings.Split(fileDir, string(filepath.Separator))
-	return strings.Join(temp[1:], string(filepath.Separator))
+	temp := filepath.Clean(fileDir)
+	tempSl := strings.Split(temp, string(filepath.Separator))
+	return strings.Join(tempSl[1:], string(filepath.Separator))
 }
 
 func updateMigration(newFilePath, srcFilePath, header string) error {

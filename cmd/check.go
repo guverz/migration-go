@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 )
@@ -34,15 +35,17 @@ type Meta struct {
 }
 
 type ListResults struct {
+	DeletedFilesCnt    int               //
 	DeletedIncludesCnt int               //
 	MissedIncludesCnt  int               //
 	MissedFilesCnt     int               //
+	DeletedFiles       map[string]string // key - project migration, value - module migration
+	DeletedIncludes    map[string]string // key - include, value - included (include is being included; included includes)
+	MissedIncludes     map[string]string // key - include, value - included
 	MissedMigrations   map[string]Meta   // key - upFileName, value - Meta
 	ModuleMigrations   map[string]Meta   // key - prefix of original migration file, value - Meta
-	ProjectIncludes    map[string]string // key - include, value - included (include is being included; included includes)
+	ProjectIncludes    map[string]string // key - include, value - included
 	ModuleIncludes     map[string]string // key - include, value - included
-	MissedIncludes     map[string]string // key - include, value - included
-	DeletedIncludes    map[string]string // key - include, value - included
 	ProjectMD5Includes map[string]string // key - MD5, value - include
 }
 
@@ -61,16 +64,42 @@ var checkCmd = &cobra.Command{
 
 func check() error {
 	rslt := &ListResults{}
+	collect := false
 
 	if err := MigrationList(MigrationDir, rslt); err != nil {
 		return fmt.Errorf("migrationList failed: %w", err)
 	}
 
 	if rslt.MissedFilesCnt != 0 {
-		Le(fmt.Sprintf("there are unregistered migration files pairs (%d), collect them and commit:", rslt.MissedFilesCnt))
+		Lw(fmt.Sprintf("there are unregistered migration files (%d), collect them and commit:", rslt.MissedFilesCnt))
+		collect = true
 		for _, file := range rslt.MissedMigrations {
 			fmt.Println(file.Prefix + ".up|down." + file.Ext)
 		}
+	}
+	if rslt.MissedIncludesCnt != 0 {
+		Lw(fmt.Sprintf("there is number of unregistered include files (%d), collect them and commit:", rslt.MissedFilesCnt))
+		collect = true
+		for include, included := range rslt.MissedIncludes {
+			fmt.Printf("include %s inclded by %s\n", include, included)
+		}
+	}
+	if rslt.DeletedIncludesCnt != 0 {
+		Lw(fmt.Sprintf("there is number of obsolete includes (%d), collect them and commit:", rslt.DeletedIncludesCnt))
+		collect = true
+		for include, included := range rslt.DeletedIncludes {
+			fmt.Printf("include %s included by %s\n", include, included)
+		}
+	}
+	if rslt.DeletedFilesCnt != 0 {
+		Lw(fmt.Sprintf("there is number of obsolete migration files (%d), collect them and commit:", rslt.DeletedFilesCnt))
+		collect = true
+		for project, module := range rslt.DeletedFiles {
+			fmt.Printf("migration file %s missing original file %s\n", project, module)
+		}
+	}
+
+	if collect {
 		fmt.Println("do: scripts/migration collect")
 	}
 	if err := MigrationValidation(MigrationDir); err != nil {
@@ -87,6 +116,8 @@ func MigrationList(dir string, rslts *ListResults) error {
 	rslts.DeletedIncludes = make(map[string]string)
 	rslts.ModuleIncludes = make(map[string]string)
 	rslts.ProjectIncludes = make(map[string]string)
+	rslts.DeletedFiles = make(map[string]string)
+	rslts.ProjectMD5Includes = make(map[string]string)
 
 	projectMigrations := make(map[string]Meta) // seems to be used by sole function
 
@@ -102,258 +133,299 @@ func MigrationList(dir string, rslts *ListResults) error {
 		fileMap[entry.Name()] = true
 	}
 
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		errOnce  sync.Once
+		firstErr error
+	)
+	sem := make(chan struct{}, ConcLimit)
+
+	setErr := func(err error) {
+		if err == nil {
+			return
+		}
+		errOnce.Do(func() {
+			firstErr = err
+		})
+	}
+
 	for _, entry := range entries {
-		Ld(fmt.Sprintf("found %s", entry.Name()))
-		// declaring maps for parseIncludes func
-		metaState := make(map[string]int)
-		state := make(map[string]int)
-		migrationIncludes := make(map[string]string)
-		originalIncludes := make(map[string]string)
+		wg.Add(1)
+		sem <- struct{}{}
 
-		matches := ListPattern.FindStringSubmatch(entry.Name())
-		if len(matches) != 3 {
-			continue
-		}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		filePrefix, fileExt := matches[1], matches[2]
-		downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
-		upFileName := entry.Name()
+			Ld(fmt.Sprintf("found %s", entry.Name()))
+			// declaring maps for parseIncludes func
+			metaState := make(map[string]int)
+			state := make(map[string]int)
+			migrationIncludes := make(map[string]string)
+			originalIncludes := make(map[string]string)
 
-		if _, exists := fileMap[downFileName]; !exists {
-			// assumption #1: might be bold to assume but it seems that program should still work after having found no counterpart for some mere migration file
-			// log.Printf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
-			// continue
-			return fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
-		}
+			migrationMD5Includes := make(map[string]string)
 
-		fileDirUp := filepath.Join(dir, entry.Name())
-		fileDirDown := filepath.Join(dir, downFileName)
+			matches := ListPattern.FindStringSubmatch(entry.Name())
+			if len(matches) != 3 {
+				return
+			}
 
-		if err := ParseIncludes(fileDirUp, "", state, migrationIncludes); err != nil {
-			return fmt.Errorf("parseIncludes error: %w", err)
-		}
-		// fmt.Printf("up file: %s\n", migrationIncludes)
-		if err := ParseIncludes(fileDirDown, "", state, migrationIncludes); err != nil {
-			return fmt.Errorf("parseIncludes error: %w", err)
-		}
-		// for include, included := range migrationIncludes {
-		// 	fmt.Printf("include %s included by %s\n", include, included)
-		// }
-		// fmt.Println("new cycle starts")
-		file, err := os.Open(fileDirUp)
-		if err != nil {
-			return fmt.Errorf("error opening dir: %w", err)
-		}
-		defer file.Close()
+			filePrefix, fileExt := matches[1], matches[2]
+			downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
+			upFileName := entry.Name()
 
-		scanner := bufio.NewScanner(file)
-		foundMetaFlag := false
-		for scanner.Scan() {
-			line := scanner.Text()
-			// if meta is defined
-			if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
-				foundMetaFlag = true
-				meta = strings.TrimSpace(meta)
+			if _, exists := fileMap[downFileName]; !exists {
+				setErr(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
+				return
+			}
 
-				parts := strings.SplitN(meta, ";", 2)
-				if len(parts) == 0 {
-					continue
-				}
-				pathFileName := parts[0]
-				var md5 string
-				if len(parts) == 2 {
-					md5 = parts[1]
-				}
-				fileName := filepath.Base(pathFileName)
-				path := filepath.Dir(pathFileName)
-				// check for meta in the migration file
-				matches := ListPattern.FindStringSubmatch(fileName)
-				if matches == nil {
-					// assumption #1
-					// log.Printf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name())
-					// continue
-					return fmt.Errorf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name())
-				}
+			fileDirUp := filepath.Join(dir, entry.Name())
+			fileDirDown := filepath.Join(dir, downFileName)
 
-				ext := matches[2]
-				prefix := matches[1]
+			if err := ParseIncludes(fileDirUp, "", state, migrationIncludes); err != nil {
+				setErr(fmt.Errorf("parseIncludes error: %w", err))
+				return
+			}
+			if err := ParseIncludes(fileDirDown, "", state, migrationIncludes); err != nil {
+				setErr(fmt.Errorf("parseIncludes error: %w", err))
+				return
+			}
 
-				metaDir := filepath.Join(filepath.Dir(MigrationDir), path)
+			file, err := os.Open(fileDirUp)
+			if err != nil {
+				setErr(fmt.Errorf("error opening dir: %w", err))
+				return
+			}
+			defer file.Close()
 
-				metaUpName := prefix + ".up." + ext
-				metaDownName := prefix + ".down." + ext
-				metaFileDirUp := filepath.Join(metaDir, metaUpName)
-				metaFileDirDown := filepath.Join(metaDir, metaDownName)
-				// log.Printf("UP %s, DOWN %s refered by %s", metaFileDirUp, metaFileDirDown, file.Name())
+			scanner := bufio.NewScanner(file)
+			foundMetaFlag := false
+			for scanner.Scan() {
+				line := scanner.Text()
+				// if meta is defined
+				if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
+					foundMetaFlag = true
+					meta = strings.TrimSpace(meta)
 
-				if rslt, err := FindFileViaDir(metaFileDirDown); err != nil {
-					return fmt.Errorf("findFileViaDir error: %w", err)
-				} else if !rslt {
-					if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
-						return fmt.Errorf("findFileViaDir error: %w", err)
-					} else if !rslt {
-						Le(fmt.Sprintf("migration %s does not have based migration file %s", file.Name(), metaUpName))
-						// WARNING dangerous operation, check fileDirUp is not zero and this is a regular file
-						if fileInfo, err := os.Stat(fileDirUp); err == nil && fileInfo.Mode().IsRegular() {
-							Le(fmt.Sprintf("delete %s", fileDirUp))
-							if err := os.Remove(fileDirUp); err != nil {
-								return fmt.Errorf("failed to remove file: %w", err)
-							}
-						}
-
-						// WARNING dangerous operation, check fileDirDown is not zero and this is a regular file
-						if fileInfo, err := os.Stat(fileDirDown); err == nil && fileInfo.Mode().IsRegular() {
-							Le(fmt.Sprintf("delete %s", fileDirDown))
-							if err := os.Remove(fileDirDown); err != nil {
-								return fmt.Errorf("failed to remove file: %w", err)
-							}
-						}
+					parts := strings.SplitN(meta, ";", 2)
+					if len(parts) == 0 {
 						continue
-
-					} else {
-						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir)
 					}
-				} else {
-					if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
-						return fmt.Errorf("findFileViaDir error: %w", err)
+					pathFileName := parts[0]
+					var md5 string
+					if len(parts) == 2 {
+						md5 = parts[1]
+					}
+					fileName := filepath.Base(pathFileName)
+					path := filepath.Dir(pathFileName)
+					// check for meta in the migration file
+					matches := ListPattern.FindStringSubmatch(fileName)
+					if matches == nil {
+						setErr(fmt.Errorf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name()))
+						return
+					}
+
+					ext := matches[2]
+					prefix := matches[1]
+
+					metaDir := filepath.Join(filepath.Dir(MigrationDir), path)
+
+					metaUpName := prefix + ".up." + ext
+					metaDownName := prefix + ".down." + ext
+					metaFileDirUp := filepath.Join(metaDir, metaUpName)
+					metaFileDirDown := filepath.Join(metaDir, metaDownName)
+
+					if rslt, err := FindFileViaDir(metaFileDirDown); err != nil {
+						setErr(fmt.Errorf("findFileViaDir error: %w", err))
+						return
 					} else if !rslt {
-						return fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir)
+						if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
+							setErr(fmt.Errorf("findFileViaDir error: %w", err))
+							return
+						} else if !rslt {
+							Lw(fmt.Sprintf("migration %s does not have based migration file %s", file.Name(), metaUpName))
+							mu.Lock()
+							rslts.DeletedFilesCnt = +2
+							rslts.DeletedFiles[fileDirUp] = metaFileDirUp
+							rslts.DeletedFiles[fileDirDown] = metaFileDirDown
+							mu.Unlock()
+							continue
+						} else {
+							setErr(fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir))
+							return
+						}
+					} else {
+						if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
+							setErr(fmt.Errorf("findFileViaDir error: %w", err))
+							return
+						} else if !rslt {
+							setErr(fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir))
+							return
+						}
 					}
+
+					Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
+						md5,
+						prefix,
+						ext,
+						metaDir,
+						metaUpName,
+						metaDownName),
+					)
+					mu.Lock()
+					// key of projectMigrations probably should actually be prefix:md5 because otherwise there can be different md5's with the same prefix
+					projectMigrations[md5] = Meta{
+						Prefix:       prefix,
+						Ext:          ext,
+						Dir:          metaDir,
+						UpFileName:   metaUpName,
+						DownFileName: metaDownName,
+					}
+
+					rslts.ModuleMigrations[prefix] = Meta{
+						Prefix:       filePrefix,
+						Ext:          fileExt,
+						Dir:          dir,
+						UpFileName:   upFileName,
+						DownFileName: downFileName,
+					}
+					mu.Unlock()
+
+					if err := ParseIncludes(metaFileDirDown, "", metaState, originalIncludes); err != nil {
+						setErr(fmt.Errorf("parseIncludes error: %w", err))
+						return
+					}
+					if err := ParseIncludes(metaFileDirUp, "", metaState, originalIncludes); err != nil {
+						setErr(fmt.Errorf("parseIncludes error: %w", err))
+						return
+					}
+
+					// build md5 includes from migrations includes
+					for include, included := range migrationIncludes {
+						md5Include, err := FileMD5(include)
+						if err != nil {
+							setErr(fmt.Errorf("FileMD5 error: %w", err))
+							return
+						}
+
+						migrationMD5Includes[md5Include] = include
+						mu.Lock()
+						rslts.ProjectMD5Includes[md5Include] = include
+						mu.Unlock()
+
+						Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in original includes at %s",
+							md5Include,
+							include,
+							included,
+							metaDir),
+						)
+
+						includeDir, err := filepath.Rel(filepath.Clean(dir), include)
+						if err != nil {
+							setErr(fmt.Errorf("error getting relative path: %w", err))
+							return
+						}
+						// fmt.Println(dir, include, includeDir)
+
+						// check if file exists in directory of
+						metaInclude := filepath.Join(metaDir, includeDir)
+						if rslt, err := FindFileViaDir(metaInclude); err != nil {
+							setErr(fmt.Errorf("findFileViaDir error: %w", err))
+							return
+						} else if !rslt {
+							// ERROR: include test\migrations\tables\migration.sqlite.0.2.3.sql may be deleted from test\roam-support\migrations\tables\migration.sqlite.0.2.3.sql, check later
+							// not sure if error should look that way
+							Lw(fmt.Sprintf("include %s may be deleted from %s, check later", include, metaInclude))
+							mu.Lock()
+							rslts.DeletedIncludes[include] = included
+							rslts.DeletedIncludesCnt++
+							mu.Unlock()
+						}
+
+					}
+					// compare includes and fill missed_includes or deleted includes
+					for include, included := range originalIncludes {
+						// relative path could be calculated here but it was found to be obsolete
+						md5Include, err := FileMD5(include)
+						if err != nil {
+							setErr(fmt.Errorf("FileMD5 error: %w", err))
+							return
+						}
+						Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in migrationIncludes", md5Include, include, included))
+						if _, exists := migrationMD5Includes[md5Include]; !exists {
+							mu.Lock()
+							if _, exists := rslts.MissedIncludes[include]; !exists {
+								Lw(fmt.Sprintf("include file %s is changed or does not exist in migrationIncludes", include))
+								rslts.MissedIncludesCnt++
+								rslts.MissedIncludes[include] = included
+							}
+							mu.Unlock()
+						} else {
+							mu.Lock()
+							rslts.ModuleIncludes[include] = included
+							mu.Unlock()
+						}
+					}
+
 				}
-				Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
-					md5,
-					prefix,
-					ext,
-					metaDir,
-					metaUpName,
-					metaDownName),
-				)
-				// key of projectMigrations probably should actually be prefix:md5 because otherwise there can be different md5's with the same prefix
-				projectMigrations[md5] = Meta{
-					Prefix:       prefix,
-					Ext:          ext,
-					Dir:          metaDir,
-					UpFileName:   metaUpName,
-					DownFileName: metaDownName,
+			}
+			// if meta is undefined, migration file is an original file
+			if !foundMetaFlag {
+				ogFileMD5Up, err := FileMD5(fileDirUp)
+				if err != nil {
+					setErr(fmt.Errorf("FileMD5 error: %w", err))
+					return
+				}
+				ogFileMD5Down, err := FileMD5(fileDirDown)
+				if err != nil {
+					setErr(fmt.Errorf("FileMD5 error: %w", err))
+					return
 				}
 
-				rslts.ModuleMigrations[prefix] = Meta{
+				ogFileMD5UpDown := ogFileMD5Up + ogFileMD5Down
+
+				mu.Lock()
+				projectMigrations[ogFileMD5UpDown] = Meta{
 					Prefix:       filePrefix,
 					Ext:          fileExt,
 					Dir:          dir,
 					UpFileName:   upFileName,
 					DownFileName: downFileName,
 				}
+				// fmt.Printf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s\n",
+				//  ogFileMD5UpDown,
+				//  filePrefix,
+				//  fileExt,
+				//  dir,
+				//  upFileName,
+				//  downFileName)
 
-				if err := ParseIncludes(metaFileDirDown, "", metaState, originalIncludes); err != nil {
-					return fmt.Errorf("parseIncludes error: %w", err)
-				}
-				if err := ParseIncludes(metaFileDirUp, "", metaState, originalIncludes); err != nil {
-					return fmt.Errorf("parseIncludes error: %w", err)
-				}
-
-				migrationMD5Includes := make(map[string]string)
-				rslts.ProjectMD5Includes = make(map[string]string)
-
-				// build md5 includes from migrations includes
+				Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
+					ogFileMD5UpDown,
+					filePrefix,
+					fileExt,
+					dir,
+					upFileName,
+					downFileName),
+				)
 				for include, included := range migrationIncludes {
-					md5Include, err := FileMD5(include)
-					if err != nil {
-						return fmt.Errorf("FileMD5 error: %w", err)
-					}
-
-					migrationMD5Includes[md5Include] = include
-					rslts.ProjectMD5Includes[md5Include] = include
-
-					Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in original includes at %s",
-						md5Include,
-						include,
-						included,
-						metaDir),
-					)
-
-					includeDir, err := filepath.Rel(filepath.Clean(dir), include)
-					if err != nil {
-						return fmt.Errorf("error getting relative path: %w", err)
-					}
-					// fmt.Println(dir, include, includeDir)
-
-					// check if file exists in directory of
-					metaInclude := filepath.Join(metaDir, includeDir)
-					if rslt, err := FindFileViaDir(metaInclude); err != nil {
-						return fmt.Errorf("findFileViaDir error: %w", err)
-					} else if !rslt {
-						Le(fmt.Sprintf("include %s may be deleted from %s, check later", include, metaInclude))
-						rslts.DeletedIncludes[include] = included
-						rslts.DeletedIncludesCnt++
-					}
-
+					fmt.Printf("include: %s, included by: %s", include, included)
 				}
-				// compare includes and fill missed_includes or deleted includes
-				for include, included := range originalIncludes {
-					// relative path could be calculated here but it was found to be obsolete
-					md5Include, err := FileMD5(include)
-					if err != nil {
-						return fmt.Errorf("FileMD5 error: %w", err)
-					}
-					Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in migrationIncludes", md5Include, include, included))
-					if _, exists := migrationMD5Includes[md5Include]; !exists {
-						if _, exists := rslts.MissedIncludes[include]; !exists {
-							Lw(fmt.Sprintf("include file %s is changed or does not exist in migrationIncludes", include))
-							rslts.MissedIncludesCnt++
-							rslts.MissedIncludes[include] = included
-						}
-					} else {
-						rslts.ModuleIncludes[include] = included
-					}
-				}
+				maps.Copy(rslts.ProjectIncludes, migrationIncludes)
+				mu.Unlock()
+			}
+			if err := scanner.Err(); err != nil {
+				setErr(fmt.Errorf("scanner error: %w", err))
+				return
+			}
+		}()
+	}
 
-			}
-		}
-		// if meta is undefined, migration file is an original file
-		if !foundMetaFlag {
-			ogFileMD5Up, err := FileMD5(fileDirUp)
-			if err != nil {
-				return fmt.Errorf("FileMD5 error: %w", err)
-			}
-			ogFileMD5Down, err := FileMD5(fileDirDown)
-			if err != nil {
-				return fmt.Errorf("FileMD5 error: %w", err)
-			}
-
-			ogFileMD5UpDown := ogFileMD5Up + ogFileMD5Down
-
-			projectMigrations[ogFileMD5UpDown] = Meta{
-				Prefix:       filePrefix,
-				Ext:          fileExt,
-				Dir:          dir,
-				UpFileName:   upFileName,
-				DownFileName: downFileName,
-			}
-			// fmt.Printf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s\n",
-			// 	ogFileMD5UpDown,
-			// 	filePrefix,
-			// 	fileExt,
-			// 	dir,
-			// 	upFileName,
-			// 	downFileName)
-
-			Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
-				ogFileMD5UpDown,
-				filePrefix,
-				fileExt,
-				dir,
-				upFileName,
-				downFileName),
-			)
-			for include, included := range migrationIncludes {
-				fmt.Printf("include: %s, included by: %s", include, included)
-			}
-			maps.Copy(rslts.ProjectIncludes, migrationIncludes)
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scanner error: %w", err)
-		}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
 	}
 
 	// list submodules migrations to find uncollected or changed files
@@ -390,63 +462,95 @@ func MigrationList(dir string, rslts *ListResults) error {
 			fileMap[entry.Name()] = true
 		}
 		// for each file in submodule migrations directory
+		var (
+			wgSub       sync.WaitGroup
+			errOnceSub  sync.Once
+			firstErrSub error
+		)
+		semSub := make(chan struct{}, ConcLimit)
+
+		setErrSub := func(err error) {
+			if err == nil {
+				return
+			}
+			errOnceSub.Do(func() {
+				firstErrSub = err
+			})
+		}
+
 		for _, entry := range entries {
-			Ld(fmt.Sprintf("file name %s dir %s", entry.Name(), submoduleMigration))
-			matches := ListPattern.FindStringSubmatch(entry.Name())
-			if len(matches) != 3 {
-				continue
-			}
+			wgSub.Add(1)
+			semSub <- struct{}{}
 
-			filePrefix, fileExt := matches[1], matches[2]
+			go func() {
+				defer wgSub.Done()
+				defer func() { <-semSub }()
 
-			if !strings.HasPrefix(entry.Name(), submoduleProject) {
-				Ld(fmt.Sprintf("file not started with project name: %s", submoduleProject))
-				filePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
-			}
-
-			upFileName := fmt.Sprintf("%s.up.%s", filePrefix, fileExt)
-			downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
-
-			fileDirUp := filepath.Join(submoduleMigration, upFileName)
-			fileDirDown := filepath.Join(submoduleMigration, downFileName)
-
-			if _, exists := fileMap[downFileName]; !exists {
-				// assumption #1
-				// log.Printf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
-				// continue
-				return fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir)
-			}
-
-			md5SubmoduleUp, err := FileMD5(fileDirUp)
-			if err != nil {
-				return fmt.Errorf("FileMD5 error: %w", err)
-			}
-			md5SubmoduleDown, err := FileMD5(fileDirDown)
-			if err != nil {
-				return fmt.Errorf("FileMD5 error: %w", err)
-			}
-
-			md5SubmoduleUpDown := md5SubmoduleUp + md5SubmoduleDown
-
-			Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFile: %s, DownFile: %s",
-				md5SubmoduleUpDown,
-				filePrefix,
-				fileExt,
-				submoduleMigration,
-				upFileName,
-				downFileName),
-			)
-
-			if _, exists := projectMigrations[md5SubmoduleUpDown]; !exists {
-				rslts.MissedMigrations[upFileName] = Meta{
-					Prefix:       filePrefix,
-					Ext:          fileExt,
-					Dir:          submoduleMigration,
-					UpFileName:   upFileName,
-					DownFileName: downFileName,
+				Ld(fmt.Sprintf("file name %s dir %s", entry.Name(), submoduleMigration))
+				matches := ListPattern.FindStringSubmatch(entry.Name())
+				if len(matches) != 3 {
+					return
 				}
-				rslts.MissedFilesCnt++
-			}
+
+				filePrefix, fileExt := matches[1], matches[2]
+
+				if !strings.HasPrefix(entry.Name(), submoduleProject) {
+					Ld(fmt.Sprintf("file not started with project name: %s", submoduleProject))
+					filePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
+				}
+
+				upFileName := fmt.Sprintf("%s.up.%s", filePrefix, fileExt)
+				downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
+
+				fileDirUp := filepath.Join(submoduleMigration, upFileName)
+				fileDirDown := filepath.Join(submoduleMigration, downFileName)
+
+				if _, exists := fileMap[downFileName]; !exists {
+					setErrSub(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
+					return
+				}
+
+				md5SubmoduleUp, err := FileMD5(fileDirUp)
+				if err != nil {
+					setErrSub(fmt.Errorf("FileMD5 error: %w", err))
+					return
+				}
+				md5SubmoduleDown, err := FileMD5(fileDirDown)
+				if err != nil {
+					setErrSub(fmt.Errorf("FileMD5 error: %w", err))
+					return
+				}
+
+				md5SubmoduleUpDown := md5SubmoduleUp + md5SubmoduleDown
+
+				Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFile: %s, DownFile: %s",
+					md5SubmoduleUpDown,
+					filePrefix,
+					fileExt,
+					submoduleMigration,
+					upFileName,
+					downFileName),
+				)
+
+				if _, exists := projectMigrations[md5SubmoduleUpDown]; !exists {
+					mu.Lock()
+					rslts.MissedMigrations[upFileName] = Meta{
+						Prefix:       filePrefix,
+						Ext:          fileExt,
+						Dir:          submoduleMigration,
+						UpFileName:   upFileName,
+						DownFileName: downFileName,
+					}
+					// missed pair of migrations
+					rslts.MissedFilesCnt = +2
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wgSub.Wait()
+		if firstErrSub != nil {
+			return firstErrSub
 		}
 	}
 	return nil
@@ -680,12 +784,12 @@ func MigrationValidation(path string) error {
 		}
 		Ld(fmt.Sprintf("file %s check if counterpart %s exists", fileName, counterpart))
 		if _, exists := migrations[counterpart]; !exists {
-			Le(fmt.Sprintf("ERROR: %s counterpart %s not found", fileName, counterpart))
+			Le(fmt.Sprintf("%s counterpart %s not found", fileName, counterpart))
 			wrongFilesCnt++
 		}
-		if wrongFilesCnt > 0 {
-			return fmt.Errorf("there are %d wrong files", wrongFilesCnt)
-		}
+	}
+	if wrongFilesCnt != 0 {
+		return fmt.Errorf("there are (%d) wrong files", wrongFilesCnt)
 	}
 	return nil
 }

@@ -10,10 +10,10 @@ import (
 
 var (
 	cfgFile      string
-	Help         string
 	MiniHelpDir  string
 	MigrationDir string
 	IncludeHelp  bool
+	ConcLimit    int
 	// Verbose      bool
 	Debug   bool
 	NoColor bool
@@ -35,7 +35,6 @@ const (
 	green  = "\033[32m"
 )
 
-// Execute executes the root command.
 func Execute() error {
 	return rootCmd.Execute()
 }
@@ -43,17 +42,25 @@ func Execute() error {
 func init() {
 	cobra.OnInitialize(initConfig, loadConfigToConstants)
 
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		fmt.Println(`migration helper to create migrations scripts
+usage: migration [-h|--help] [-V|--version] add
+options:
+        -h|--help      print this help and exit
+        -V|--version   print script version and exit
+commands:
+        add            add new migrations script with properly defined name
+        collect        collect migrations on submodules between commits into migrations catalog
+        check          check unregtistered migrations files at submodules`)
+	})
+
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file is:")
 	// rootCmd.Flags().BoolVarP(&Verbose, "verbose", "v", false, "verbose")
-	rootCmd.PersistentFlags().BoolVar(&NoColor, "no-color", false, "no color used logging")
+	rootCmd.PersistentFlags().BoolVar(&NoColor, "no-color", false, "non-color logs")
 	rootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "d", false, "debug")
 	rootCmd.Flags().BoolP("version", "V", false, "print script version and exit")
 	rootCmd.Flags().BoolP("help", "h", false, "print this help and exit")
 
-	rootCmd.AddCommand(helpCmd)
-	rootCmd.AddCommand(addCmd)
-	rootCmd.AddCommand(checkCmd)
-	rootCmd.AddCommand(collectCmd)
 }
 
 func initConfig() {
@@ -82,34 +89,16 @@ func initConfig() {
 }
 
 func setDefaults() {
-	viper.SetDefault("help.full", `migration helper to create migrations scripts
-usage: migration [-h|--help] [-V|--version] add
-options:
-        -h|--help      print this help and exit
-        -V|--version   print script version and exit
-commands:
-        add            add new migrations script with properly defined name
-        collect        collect migrations on submodules between commits into migrations catalog
-        check          check unregtistered migrations files at submodules`)
-
 	viper.SetDefault("help.include", true)
 	viper.SetDefault("directories.mini_help", "migration.template.sql")
 	viper.SetDefault("directories.migrations", "./migrations")
-	viper.SetDefault("app.name", "migration-go")
-	viper.SetDefault("app.version", "0.1")
 }
 
 func loadConfigToConstants() {
-	Help = viper.GetString("help.full")
-
 	MiniHelpDir = viper.GetString("directories.mini_help")
 	MigrationDir = viper.GetString("directories.migrations")
-
+	ConcLimit = viper.GetInt("app.conc_limit")
 	IncludeHelp = viper.GetBool("help.include")
-
-	if version := viper.GetString("app.version"); version != "" {
-		rootCmd.Version = version
-	}
 }
 
 func Ld(msg string) {
