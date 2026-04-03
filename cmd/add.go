@@ -3,12 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 
+	versiongo "github.com/AlexBurnes/version-go/pkg/version"
 	"github.com/spf13/cobra"
 )
 
@@ -118,15 +117,23 @@ func Add(includeFlag bool) (string, error) {
 	return migrationFile, nil
 }
 
-func Describe(dir, arg string) (string, error) {
-	cmd := exec.Command("version", arg)
-	cmd.Dir = dir
-
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to run version %v in %v: %w", dir, arg, err)
+func Describe(dir, arg string) (rslt string, err error) {
+	switch arg {
+	case "project":
+		rslt, err = versiongo.GetProjectFromGit(dir)
+	case "version":
+		rslt, err = versiongo.GetVersion(dir)
+	case "release":
+		rslt = versiongo.GetRelease()
+	case "full":
+		rslt, err = versiongo.GetFull(dir)
+	default:
+		return "", fmt.Errorf("unknown argument")
 	}
-	return strings.TrimSpace(string(output)), nil
+	if err != nil {
+		return "", err
+	}
+	return rslt, nil
 }
 
 func minihelp() (string, error) {
