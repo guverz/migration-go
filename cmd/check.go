@@ -26,6 +26,22 @@ var (
 	done     = 2
 )
 
+type ParseContext struct {
+	State    map[string]int
+	Includes map[string]string
+
+	MissingFiles map[string]string // key - include; value - included
+	Errors       []error
+}
+
+func NewParseContext() *ParseContext {
+	return &ParseContext{
+		State:        make(map[string]int),
+		Includes:     make(map[string]string),
+		MissingFiles: make(map[string]string),
+	}
+}
+
 type Meta struct {
 	Prefix       string
 	Ext          string
@@ -42,7 +58,7 @@ type ListResults struct {
 	DeletedFiles       map[string]string // key - project migration, value - module migration
 	DeletedIncludes    map[string]string // key - include, value - included (include is being included; included includes)
 	MissedIncludes     map[string]string // key - include, value - included
-	MissedMigrations   map[string]Meta   // key - upFileName, value - Meta
+	MissedFiles        map[string]Meta   // key - upFileName, value - Meta
 	ModuleMigrations   map[string]Meta   // key - prefix of original migration file, value - Meta
 	ProjectIncludes    map[string]string // key - include, value - included
 	ModuleIncludes     map[string]string // key - include, value - included
@@ -65,23 +81,25 @@ var checkCmd = &cobra.Command{
 func check() error {
 	rslt := &ListResults{}
 	collect := false
-
-	if err := MigrationList(MigrationDir, rslt); err != nil {
-		return fmt.Errorf("migrationList failed: %w", err)
+	var listError error
+	err := MigrationList(MigrationDir, rslt)
+	if err != nil {
+		listError = fmt.Errorf("migrationList failed: %w", err)
+		// return fmt.Errorf("migrationList failed: %w", err)
 	}
 
 	if rslt.MissedFilesCnt != 0 {
 		Lw(fmt.Sprintf("there are unregistered migration files (%d), collect them and commit:", rslt.MissedFilesCnt))
 		collect = true
-		for _, file := range rslt.MissedMigrations {
+		for _, file := range rslt.MissedFiles {
 			fmt.Println(file.Prefix + ".up|down." + file.Ext)
 		}
 	}
 	if rslt.MissedIncludesCnt != 0 {
-		Lw(fmt.Sprintf("there is number of unregistered include files (%d), collect them and commit:", rslt.MissedFilesCnt))
+		Lw(fmt.Sprintf("there is number of unregistered include files (%d), collect them and commit:", rslt.MissedIncludesCnt))
 		collect = true
 		for include, included := range rslt.MissedIncludes {
-			fmt.Printf("include %s inclded by %s\n", include, included)
+			fmt.Printf("include %s included by %s\n", include, included)
 		}
 	}
 	if rslt.DeletedIncludesCnt != 0 {
@@ -102,8 +120,11 @@ func check() error {
 	if collect {
 		fmt.Println("do: scripts/migration collect")
 	}
-	if err := MigrationValidation(MigrationDir); err != nil {
-		return fmt.Errorf("error migration validation: %w", err)
+	// if err := MigrationValidation(MigrationDir); err != nil {
+	// 	return fmt.Errorf("error migration validation: %w", err)
+	// }
+	if listError != nil {
+		return listError
 	}
 	return nil
 }
@@ -160,10 +181,8 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 			Ld(fmt.Sprintf("found %s", entry.Name()))
 			// declaring maps for parseIncludes func
-			metaState := make(map[string]int)
-			state := make(map[string]int)
-			migrationIncludes := make(map[string]string)
-			originalIncludes := make(map[string]string)
+			moduleContext := NewParseContext()
+			projectContext := NewParseContext()
 
 			migrationMD5Includes := make(map[string]string)
 
@@ -177,6 +196,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 			upFileName := entry.Name()
 
 			if _, exists := fileMap[downFileName]; !exists {
+				// Lw(fmt.Sprintf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
 				setErr(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
 				return
 			}
@@ -184,14 +204,31 @@ func MigrationList(dir string, rslts *ListResults) error {
 			fileDirUp := filepath.Join(dir, entry.Name())
 			fileDirDown := filepath.Join(dir, downFileName)
 
-			if err := ParseIncludes(fileDirUp, "", state, migrationIncludes); err != nil {
+			if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
 				setErr(fmt.Errorf("parseIncludes error: %w", err))
 				return
 			}
-			if err := ParseIncludes(fileDirDown, "", state, migrationIncludes); err != nil {
+			if err := ParseIncludes(projectContext, fileDirDown, ""); err != nil {
 				setErr(fmt.Errorf("parseIncludes error: %w", err))
 				return
 			}
+			if len(projectContext.Errors) != 0 {
+				for _, e := range projectContext.Errors {
+					Lw(fmt.Sprintf("non-critical error: %s", e))
+				}
+			}
+			// project include is literally missing
+			// for include, included := range projectContext.MissingFiles {
+			// 	mu.Lock()
+			// 	if _, exists := rslts.MissedIncludes[include]; !exists {
+			// 		rslts.MissedIncludes[include] = included
+			// 		rslts.MissedIncludesCnt++
+			// 		mu.Unlock()
+			// 		Lw(fmt.Sprintf("missed include: %s (included by %s)", include, included))
+			// 	} else {
+			// 		mu.Unlock()
+			// 	}
+			// }
 
 			file, err := os.Open(fileDirUp)
 			if err != nil {
@@ -230,7 +267,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 					ext := matches[2]
 					prefix := matches[1]
 
-					metaDir := filepath.Join(filepath.Dir(MigrationDir), path)
+					metaDir := filepath.Join(filepath.Dir(dir), path)
 
 					metaUpName := prefix + ".up." + ext
 					metaDownName := prefix + ".down." + ext
@@ -247,11 +284,12 @@ func MigrationList(dir string, rslts *ListResults) error {
 						} else if !rslt {
 							Lw(fmt.Sprintf("migration %s does not have based migration file %s", file.Name(), metaUpName))
 							mu.Lock()
-							rslts.DeletedFilesCnt = +2
+							// pair of migrations is missing
+							rslts.DeletedFilesCnt += 2
 							rslts.DeletedFiles[fileDirUp] = metaFileDirUp
 							rslts.DeletedFiles[fileDirDown] = metaFileDirDown
 							mu.Unlock()
-							continue
+							// continue
 						} else {
 							setErr(fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir))
 							return
@@ -293,17 +331,69 @@ func MigrationList(dir string, rslts *ListResults) error {
 					}
 					mu.Unlock()
 
-					if err := ParseIncludes(metaFileDirDown, "", metaState, originalIncludes); err != nil {
+					if err := ParseIncludes(moduleContext, metaFileDirDown, ""); err != nil {
 						setErr(fmt.Errorf("parseIncludes error: %w", err))
 						return
 					}
-					if err := ParseIncludes(metaFileDirUp, "", metaState, originalIncludes); err != nil {
+					if err := ParseIncludes(moduleContext, metaFileDirUp, ""); err != nil {
 						setErr(fmt.Errorf("parseIncludes error: %w", err))
 						return
+					}
+					if len(moduleContext.Errors) != 0 {
+						for _, e := range moduleContext.Errors {
+							Lw(fmt.Sprintf("non-critical error: %s", e))
+						}
+					}
+					for include, included := range moduleContext.MissingFiles {
+						// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
+						if included == "" {
+							continue
+						} else {
+							Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+						}
+						// this is an error caused by developer, he should fix it by himself (or we can try to delete the @include line in the migration file of the module)
+						// mu.Lock()
+						// if _, exists := rslts.DeletedIncludes[include]; !exists {
+						// 	rslts.DeletedIncludes[include] = included
+						// 	rslts.DeletedIncludesCnt++
+						// 	mu.Unlock()
+						// 	Lw(fmt.Sprintf("deleted include: %s (included by %s)", include, included))
+						// } else {
+						// 	mu.Unlock()
+						// }
+					}
+					// project include is literally missing
+					for include, included := range projectContext.MissingFiles {
+						includeDir, err := filepath.Rel(filepath.Clean(dir), include)
+						if err != nil {
+							setErr(fmt.Errorf("error getting relative path: %w", err))
+							return
+						}
+						metaInclude := filepath.Join(metaDir, includeDir)
+						mu.Lock()
+						if _, exists := rslts.MissedIncludes[metaInclude]; !exists {
+							if metaIncluded, exists := rslts.ModuleIncludes[metaInclude]; exists {
+								rslts.MissedIncludes[metaInclude] = metaIncluded
+								rslts.MissedIncludesCnt++
+								mu.Unlock()
+								Lw(fmt.Sprintf("missed include: %s (included by %s)", include, included))
+							} else {
+								rslts.MissedIncludes[metaInclude] = "unknown"
+								rslts.MissedIncludesCnt++
+								mu.Unlock()
+								Lw(fmt.Sprintf("include %s is missing, should be recreated using %s", include, metaInclude))
+								Lw(fmt.Sprintf("can't find the file that included %s yet", metaInclude))
+								// setErr(fmt.Errorf("can't find the file that included %s", metaInclude))
+								// return
+							}
+						} else {
+							mu.Unlock()
+						}
 					}
 
 					// build md5 includes from migrations includes
-					for include, included := range migrationIncludes {
+					for include, included := range projectContext.Includes {
+						// fmt.Println(include, included)
 						md5Include, err := FileMD5(include)
 						if err != nil {
 							setErr(fmt.Errorf("FileMD5 error: %w", err))
@@ -329,16 +419,14 @@ func MigrationList(dir string, rslts *ListResults) error {
 						}
 						// fmt.Println(dir, include, includeDir)
 
-						// check if file exists in directory of
+						// check if original include exists in module
 						metaInclude := filepath.Join(metaDir, includeDir)
 						if rslt, err := FindFileViaDir(metaInclude); err != nil {
 							setErr(fmt.Errorf("findFileViaDir error: %w", err))
 							return
 						} else if !rslt {
-							// ERROR: include test\migrations\tables\migration.sqlite.0.2.3.sql may be deleted from test\roam-support\migrations\tables\migration.sqlite.0.2.3.sql, check later
-							// not sure if error should look that way
-							Lw(fmt.Sprintf("include %s may be deleted from %s, check later", include, metaInclude))
 							mu.Lock()
+							Lw(fmt.Sprintf("include %s may be deleted as %s is deleted", include, metaInclude))
 							rslts.DeletedIncludes[include] = included
 							rslts.DeletedIncludesCnt++
 							mu.Unlock()
@@ -346,7 +434,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 					}
 					// compare includes and fill missed_includes or deleted includes
-					for include, included := range originalIncludes {
+					for include, included := range moduleContext.Includes {
 						// relative path could be calculated here but it was found to be obsolete
 						md5Include, err := FileMD5(include)
 						if err != nil {
@@ -355,11 +443,20 @@ func MigrationList(dir string, rslts *ListResults) error {
 						}
 						Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in migrationIncludes", md5Include, include, included))
 						if _, exists := migrationMD5Includes[md5Include]; !exists {
+							// migrationInclude, err := moduleToMigration(dir, include)
+							// if err != nil {
+							// 	setErr(fmt.Errorf("error transforming module to migration include path: %w", err))
+							// 	return
+							// }
 							mu.Lock()
 							if _, exists := rslts.MissedIncludes[include]; !exists {
-								Lw(fmt.Sprintf("include file %s is changed or does not exist in migrationIncludes", include))
+								// if migrationIncluded, exists := rslts.ModuleIncludes[migrationInclude]; exists {
+								Lw(fmt.Sprintf("copy of include file %s is changed", include))
 								rslts.MissedIncludesCnt++
 								rslts.MissedIncludes[include] = included
+								// } else {
+								// 	Le(fmt.Sprintf("can't find the file that included %s", migrationInclude))
+								// }
 							}
 							mu.Unlock()
 						} else {
@@ -410,10 +507,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 					upFileName,
 					downFileName),
 				)
-				for include, included := range migrationIncludes {
-					fmt.Printf("include: %s, included by: %s", include, included)
-				}
-				maps.Copy(rslts.ProjectIncludes, migrationIncludes)
+				// for include, included := range projectContext.Parent {
+				// 	fmt.Printf("include: %s, included by: %s\n", include, included)
+				// }
+				maps.Copy(rslts.ProjectIncludes, projectContext.Includes)
 				mu.Unlock()
 			}
 			if err := scanner.Err(); err != nil {
@@ -431,14 +528,14 @@ func MigrationList(dir string, rslts *ListResults) error {
 	// list submodules migrations to find uncollected or changed files
 
 	rslts.MissedFilesCnt = 0
-	rslts.MissedMigrations = make(map[string]Meta)
+	rslts.MissedFiles = make(map[string]Meta)
 
 	// getting submodule dir
-	submoduleDirSlice, err := getSubmoduleDir(MigrationDir)
+	submoduleDirSlice, err := getSubmoduleDir(dir)
 	if err != nil {
 		return fmt.Errorf("getSubmoduleDir failed: %w", err)
 	}
-	MigrationDirName := filepath.Base(MigrationDir)
+	MigrationDirName := filepath.Base(dir)
 	// for each git submodule
 	for _, submoduleDir := range submoduleDirSlice {
 		submoduleProject := ""
@@ -494,6 +591,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 				filePrefix, fileExt := matches[1], matches[2]
 
+				// seems like obsolete check
 				if !strings.HasPrefix(entry.Name(), submoduleProject) {
 					Ld(fmt.Sprintf("file not started with project name: %s", submoduleProject))
 					filePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
@@ -534,7 +632,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 				if _, exists := projectMigrations[md5SubmoduleUpDown]; !exists {
 					mu.Lock()
-					rslts.MissedMigrations[upFileName] = Meta{
+					rslts.MissedFiles[upFileName] = Meta{
 						Prefix:       filePrefix,
 						Ext:          fileExt,
 						Dir:          submoduleMigration,
@@ -542,7 +640,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 						DownFileName: downFileName,
 					}
 					// missed pair of migrations
-					rslts.MissedFilesCnt = +2
+					rslts.MissedFilesCnt += 2
 					mu.Unlock()
 				}
 			}()
@@ -553,6 +651,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 			return firstErrSub
 		}
 	}
+
+	// for include, included := range rslts.ModuleIncludes {
+	// 	fmt.Println(include, included)
+	// }
 	return nil
 }
 
@@ -567,27 +669,32 @@ func FindFileViaDir(fileDir string) (bool, error) {
 	return false, err
 }
 
-func ParseIncludes(fileDir string, current string, state map[string]int, parent map[string]string) error {
+func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 
 	Ld(fmt.Sprintf("parse file on includes %s", fileDir))
 
-	if state[fileDir] == visiting {
+	if ctx.State[fileDir] == visiting {
 		return fmt.Errorf("include loop detected %s included by %s already included by %s",
 			fileDir,
 			current,
-			parent[fileDir],
+			ctx.Includes[fileDir],
 		)
 	}
 
-	if state[fileDir] == done {
+	if ctx.State[fileDir] == done {
 		return nil
 	}
 
-	state[fileDir] = visiting
+	ctx.State[fileDir] = visiting
 
 	file, err := os.Open(fileDir)
 	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", fileDir, err)
+		if os.IsNotExist(err) {
+			delete(ctx.Includes, fileDir)
+			ctx.MissingFiles[fileDir] = current
+			return nil
+		}
+		return fmt.Errorf("open %s: %w", fileDir, err)
 	}
 	defer file.Close()
 
@@ -613,11 +720,11 @@ func ParseIncludes(fileDir string, current string, state map[string]int, parent 
 		Ld(fmt.Sprintf("%s include %s dir %s", fileDir, includeName, dir))
 		// ld("file include include dir")
 
-		if _, exists := parent[includeDir]; !exists {
-			parent[includeDir] = fileDir
+		if _, exists := ctx.Includes[includeDir]; !exists {
+			ctx.Includes[includeDir] = fileDir
 		}
 
-		if err := ParseIncludes(includeDir, fileDir, state, parent); err != nil {
+		if err := ParseIncludes(ctx, includeDir, fileDir); err != nil {
 			return fmt.Errorf("include %s -> %s: %w", fileDir, includeDir, err)
 		}
 	}
@@ -626,7 +733,7 @@ func ParseIncludes(fileDir string, current string, state map[string]int, parent 
 		return fmt.Errorf("scanner error: %w", err)
 	}
 
-	state[fileDir] = done
+	ctx.State[fileDir] = done
 	return nil
 }
 
@@ -724,8 +831,7 @@ func getProject(repoPath string) (string, error) {
 func MigrationValidation(path string) error {
 	wrongFilesCnt := 0
 	migrations := make(map[string]string)
-	migrationIncludes := make(map[string]string)
-	state := make(map[string]int)
+	projectContext := NewParseContext()
 
 	var files []string
 
@@ -754,8 +860,21 @@ func MigrationValidation(path string) error {
 		// ld "file ${file_name} check name is correct $file"
 		Ld(fmt.Sprintf("file %s check if name is correct %s", fileName, file))
 		if ValidationPattern.MatchString(fileName) {
-			if err := ParseIncludes(file, "", state, migrationIncludes); err != nil {
-				return fmt.Errorf("error parsing Includes of %s, Error: %w", fileName, err)
+			if err := ParseIncludes(projectContext, file, ""); err != nil {
+				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
+			}
+			if len(projectContext.Errors) != 0 {
+				for _, e := range projectContext.Errors {
+					Lw(fmt.Sprintf("non-critical error: %s", e))
+				}
+			}
+			if len(projectContext.MissingFiles) != 0 {
+				Lw("deleted Includes:")
+				for include := range projectContext.MissingFiles {
+					fmt.Println(include)
+					wrongFilesCnt++
+					// rslts.DeletedIncludesCnt++
+				}
 			}
 		}
 	}
@@ -764,7 +883,7 @@ func MigrationValidation(path string) error {
 		relative := strings.TrimPrefix(fileDir, path+"/")
 		matches := ValidationPattern.FindStringSubmatch(fileName)
 		if matches == nil {
-			if _, exists := migrationIncludes[relative]; !exists {
+			if _, exists := projectContext.Includes[relative]; !exists {
 				// undefined includes crawl in here and activate Le; I think that's not how it's supposed to work
 				Le(fmt.Sprintf("%s wrong file name suffix expect .up.sql or .down.sql", fileName))
 				wrongFilesCnt++
@@ -793,3 +912,16 @@ func MigrationValidation(path string) error {
 	}
 	return nil
 }
+
+// func moduleToMigration(migrationDir, moduleInclude string) (string, error) {
+// 	var ModuleDir string
+// 	idx := strings.Index(moduleInclude, "migrations")
+// 	if idx != -1 {
+// 		ModuleDir = moduleInclude[:idx+len("migrations")]
+// 	}
+// 	includePathRel, err := filepath.Rel(filepath.Clean(ModuleDir), moduleInclude)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	return filepath.Join(migrationDir, includePathRel), nil
+// }

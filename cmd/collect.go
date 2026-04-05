@@ -26,27 +26,30 @@ var collectCmd = &cobra.Command{
 func collect() error {
 	rslts := &ListResults{}
 	collectedCnt := 0
-
-	if err := MigrationList(MigrationDir, rslts); err != nil {
-		return fmt.Errorf("error MigrationList: %w", err)
+	var listError error
+	err := MigrationList(MigrationDir, rslts)
+	if err != nil {
+		listError = fmt.Errorf("migrationList failed: %w", err)
+		// return fmt.Errorf("migrationList failed: %w", err)
 	}
 
 	if rslts.MissedFilesCnt != 0 {
-		fmt.Printf("there are unregistered migration files pairs (%d), collect:\n", rslts.MissedFilesCnt)
+		fmt.Printf("there are unregistered migration files pairs (%d), collecting:\n", rslts.MissedFilesCnt)
 		targetDirUp := ""
 		targetDirDown := ""
-		for _, module := range rslts.MissedMigrations {
+		for _, module := range rslts.MissedFiles {
+			fmt.Printf("%s.up|down.%s\n", module.Prefix, module.Ext)
 			upFileDir := filepath.Join(module.Dir, module.UpFileName)
 			downFileDir := filepath.Join(module.Dir, module.DownFileName)
 			if rslt, err := FindFileViaDir(upFileDir); err != nil {
 				return fmt.Errorf("error FindFileViaDir: %w", err)
 			} else if !rslt {
-				return fmt.Errorf("BUG: there is no file %s, something wrong", upFileDir)
+				return fmt.Errorf("BUG: there is no file %s, something is wrong", upFileDir)
 			}
 			if rslt, err := FindFileViaDir(downFileDir); err != nil {
 				return fmt.Errorf("error FindFileViaDir: %w", err)
 			} else if !rslt {
-				return fmt.Errorf("BUG: there is no file %s, something wrong", downFileDir)
+				return fmt.Errorf("BUG: there is no file %s, something is wrong", downFileDir)
 			}
 			// before check name exists in module_migrations file_prefix=>project_migration_file_pair
 			if migration, exists := rslts.ModuleMigrations[module.Prefix]; exists {
@@ -80,14 +83,26 @@ func collect() error {
 			} else {
 				// if new migration pair is required
 				fmt.Println("creating new migration file")
-				originalIncludes := make(map[string]string)
-				state := make(map[string]int)
+				moduleContext := NewParseContext()
 
-				if err := ParseIncludes(upFileDir, "", state, originalIncludes); err != nil {
+				if err := ParseIncludes(moduleContext, upFileDir, ""); err != nil {
 					return fmt.Errorf("error ParseIncludes: %w", err)
 				}
-				if err := ParseIncludes(downFileDir, "", state, originalIncludes); err != nil {
+				if err := ParseIncludes(moduleContext, downFileDir, ""); err != nil {
 					return fmt.Errorf("error ParseIncludes: %w", err)
+				}
+				if len(moduleContext.Errors) != 0 {
+					for _, e := range moduleContext.Errors {
+						fmt.Println("error:", e)
+					}
+				}
+				for include, included := range moduleContext.MissingFiles {
+					// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
+					if included == "" {
+						continue
+					} else {
+						Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+					}
 				}
 
 				migrationTemplate, err := Add(false)
@@ -113,7 +128,7 @@ func collect() error {
 					return fmt.Errorf("BUG: there is no file %s, something wrong", newDownFileDir)
 				}
 				// compare includes and fill missed_includes or deleted includes
-				for include, included := range originalIncludes {
+				for include, included := range moduleContext.Includes {
 					Ld(fmt.Sprintf("include file %s", include))
 
 					md5, err := FileMD5(include)
@@ -188,62 +203,71 @@ func collect() error {
 		// }
 		for include, included := range rslts.MissedIncludes {
 			Ld(fmt.Sprintf("include file %s", include))
-			md5, err := FileMD5(include)
-			if err != nil {
-				return fmt.Errorf("error FileMD5: %w", err)
-			}
-			Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in rslts.ProjectIncludes", md5, include, included))
-
-			// includeRelativeFile := StripDir(include)
-			// includeRelativePath := filepath.Dir(includeRelativeFile)
-
-			rawInclude := include
-			marker := "migrations" + string(filepath.Separator)
-			if idx := strings.Index(rawInclude, marker); idx != -1 {
-				rawInclude = rawInclude[idx+len(marker):]
-			}
-			newIncludeFile := filepath.Join(MigrationDir, rawInclude)
-			newIncludeDir := filepath.Dir(newIncludeFile)
-
-			if rslt, err := FindFileViaDir(newIncludeDir); err != nil {
+			if exists, err := FindFileViaDir(include); err != nil {
 				return fmt.Errorf("error FindFileViaDir: %w", err)
-			} else if !rslt {
-				if err := os.Mkdir(newIncludeDir, 0755); err != nil {
-					return fmt.Errorf("error creating dir: %w", err)
-				}
-			}
-			if _, exists := rslts.ProjectIncludes[newIncludeFile]; exists {
-				projectMD5, err := FileMD5(newIncludeFile)
+			} else if exists {
+				md5, err := FileMD5(include)
 				if err != nil {
 					return fmt.Errorf("error FileMD5: %w", err)
 				}
-				if md5 != projectMD5 {
-					Lw(fmt.Sprintf("%s there is in rslts.ProjectIncludes[%s], it was changed, replace it", newIncludeFile, newIncludeFile))
-					if err := updateMigration(newIncludeFile, include, ""); err != nil {
-						return fmt.Errorf("error updating include: %w", err)
+				Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in rslts.ProjectIncludes", md5, include, included))
+
+				// includeRelativeFile := StripDir(include)
+				// includeRelativePath := filepath.Dir(includeRelativeFile)
+
+				// from moduleInclude creating projectInclude
+				rawInclude := include
+				marker := "migrations" + string(filepath.Separator)
+				if idx := strings.Index(rawInclude, marker); idx != -1 {
+					rawInclude = rawInclude[idx+len(marker):]
+				}
+				newIncludeFile := filepath.Join(MigrationDir, rawInclude)
+				newIncludeDir := filepath.Dir(newIncludeFile)
+
+				if rslt, err := FindFileViaDir(newIncludeDir); err != nil {
+					return fmt.Errorf("error FindFileViaDir: %w", err)
+				} else if !rslt {
+					if err := os.Mkdir(newIncludeDir, 0755); err != nil {
+						return fmt.Errorf("error creating dir: %w", err)
 					}
+				}
+				if _, exists := rslts.ProjectIncludes[newIncludeFile]; exists {
+					projectMD5, err := FileMD5(newIncludeFile)
+					if err != nil {
+						return fmt.Errorf("error FileMD5: %w", err)
+					}
+					if md5 != projectMD5 {
+						Lw(fmt.Sprintf("%s there is in rslts.ProjectIncludes[%s], it was changed, replace it", newIncludeFile, newIncludeFile))
+						if err := updateMigration(newIncludeFile, include, ""); err != nil {
+							return fmt.Errorf("error updating include: %w", err)
+						}
+						collectedCnt++
+					}
+				} else {
+					fmt.Printf("add include file %s\n", include)
+
+					if exists, err := FindFileViaDir(newIncludeFile); err != nil {
+						return fmt.Errorf("error FindFileViaDir: %w", err)
+					} else if !exists {
+						if err := os.WriteFile(newIncludeFile, []byte{}, 0644); err != nil {
+							return fmt.Errorf("error creating file: %w", err)
+						}
+					} else if exists {
+						if err := os.Truncate(newIncludeFile, 0); err != nil {
+							return fmt.Errorf("error zeroing file: %w", err)
+						}
+					}
+
+					if err := updateMigration(newIncludeFile, include, ""); err != nil {
+						return fmt.Errorf("error adding include: %w", err)
+					}
+					// project_includes[${included_relative_file}]=${included_file}
+					// rslts.ProjectIncludes[newIncludeFile] = include
 					collectedCnt++
 				}
-			} else {
-				fmt.Printf("add include file %s\n", include)
-
-				if exists, err := FindFileViaDir(newIncludeFile); err != nil {
-					return fmt.Errorf("error FindFileViaDir: %w", err)
-				} else if !exists {
-					if err := os.WriteFile(newIncludeFile, []byte{}, 0644); err != nil {
-						return fmt.Errorf("error creating file: %w", err)
-					}
-				} else if exists {
-					if err := os.Truncate(newIncludeFile, 0); err != nil {
-						return fmt.Errorf("error zeroing file: %w", err)
-					}
-				}
-
-				if err := updateMigration(newIncludeFile, include, ""); err != nil {
-					return fmt.Errorf("error adding include: %w", err)
-				}
-				// project_includes[${included_relative_file}]=${included_file}
-				// rslts.ProjectIncludes[newIncludeFile] = include
+			} else { // projectInclude is deleted, need to copy it
+				// includeDir := filepath.Dir(include)
+				// if includeDir
 				collectedCnt++
 			}
 		}
@@ -252,7 +276,7 @@ func collect() error {
 		Ld(fmt.Sprintf("there is deleted includes %d", rslts.DeletedIncludesCnt))
 		for include, included := range rslts.DeletedIncludes {
 			fmt.Printf("include file %s included by %s\n", include, included)
-			// check file exists in rslts.ProjectIncludes, if inlcuded by some one else, then do not delete
+			// check if file exists in rslts.ProjectIncludes, if included by something else, then do not delete
 			_, exists1 := rslts.ProjectIncludes[include]
 			_, exists2 := rslts.ModuleIncludes[include]
 			if !exists1 && !exists2 {
@@ -280,9 +304,9 @@ func collect() error {
 
 	}
 
-	if err := MigrationValidation(MigrationDir); err != nil {
-		return fmt.Errorf("error MigrationValidation: %w", err)
-	}
+	// if err := MigrationValidation(MigrationDir); err != nil {
+	// 	return fmt.Errorf("error MigrationValidation: %w", err)
+	// }
 
 	if collectedCnt != 0 {
 		fmt.Printf("%s: %s\n",
@@ -294,6 +318,10 @@ func collect() error {
 			colorize("[OK]", green),
 			colorize("nothing to collect", reset),
 		)
+	}
+
+	if listError != nil {
+		return listError
 	}
 
 	return nil
