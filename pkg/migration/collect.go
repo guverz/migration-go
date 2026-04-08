@@ -1,0 +1,449 @@
+package migration
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+var (
+	ValidationPattern = regexp.MustCompile(`^(.+)\.(up|down)\.sql$`)
+)
+
+func MissedFiles(rslts *ListResults) (int, error) {
+	collectedCnt := 0
+
+	targetDirUp := ""
+	targetDirDown := ""
+	for _, module := range rslts.MissedFiles {
+		fmt.Printf("%s.up|down.%s\n", module.Prefix, module.Ext)
+		upFileDir := filepath.Join(module.Dir, module.UpFileName)
+		downFileDir := filepath.Join(module.Dir, module.DownFileName)
+		if rslt, err := FindFileViaDir(upFileDir); err != nil {
+			return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+		} else if !rslt {
+			return 0, fmt.Errorf("BUG: there is no file %s, something is wrong", upFileDir)
+		}
+		if rslt, err := FindFileViaDir(downFileDir); err != nil {
+			return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+		} else if !rslt {
+			return 0, fmt.Errorf("BUG: there is no file %s, something is wrong", downFileDir)
+		}
+		// before check name exists in moduleMigrations file_prefix=>project_migration_file_pair
+		if project, exists := rslts.ModuleMigrations[module.Prefix]; exists {
+			// if only the update of the migration file is required
+			migrationUpFileDir := filepath.Join(project.Dir, project.UpFileName)
+			migrationDownFileDir := filepath.Join(project.Dir, project.DownFileName)
+
+			if rslt, err := FindFileViaDir(migrationUpFileDir); err != nil {
+				return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				return 0, fmt.Errorf("BUG: there is no file %s, something wrong", migrationUpFileDir)
+			}
+			if rslt, err := FindFileViaDir(migrationDownFileDir); err != nil {
+				return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				return 0, fmt.Errorf("BUG: there is no file %s, something wrong", migrationDownFileDir)
+			}
+
+			if err := os.Truncate(migrationUpFileDir, 0); err != nil {
+				return 0, fmt.Errorf("error zeroing file: %w", err)
+			}
+
+			if err := os.Truncate(migrationDownFileDir, 0); err != nil {
+				return 0, fmt.Errorf("error zeroing file: %w", err)
+			}
+
+			targetDirUp = migrationUpFileDir
+			targetDirDown = migrationDownFileDir
+
+			Lw(fmt.Sprintf("pair %s.up|down.%s update migration %s.up|down.%s", module.Prefix, module.Ext, project.Prefix, project.Ext))
+		} else {
+			// if new migration pair is required
+			fmt.Println("creating new migration file")
+			moduleContext := NewParseContext()
+
+			if err := ParseIncludes(moduleContext, upFileDir, ""); err != nil {
+				return 0, fmt.Errorf("error ParseIncludes: %w", err)
+			}
+			if err := ParseIncludes(moduleContext, downFileDir, ""); err != nil {
+				return 0, fmt.Errorf("error ParseIncludes: %w", err)
+			}
+			if len(moduleContext.Errors) != 0 {
+				for _, e := range moduleContext.Errors {
+					fmt.Println("error:", e)
+				}
+			}
+			for include, included := range moduleContext.MissingFiles {
+				// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
+				if included == "" {
+					continue
+				} else {
+					Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+				}
+			}
+
+			migrationTemplate, err := Add(false)
+			if err != nil {
+				return 0, fmt.Errorf("error Add: %w", err)
+			}
+			newUpFileName := fmt.Sprintf("%s.up.sql", migrationTemplate)
+			newDownFileName := fmt.Sprintf("%s.down.sql", migrationTemplate)
+			newUpFileDir := filepath.Join(MigrationDir, newUpFileName)
+			newDownFileDir := filepath.Join(MigrationDir, newDownFileName)
+
+			targetDirUp = newUpFileDir
+			targetDirDown = newDownFileDir
+
+			if rslt, err := FindFileViaDir(newUpFileDir); err != nil {
+				return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				return 0, fmt.Errorf("BUG: there is no file %s, something wrong", newUpFileDir)
+			}
+			if rslt, err := FindFileViaDir(newDownFileDir); err != nil {
+				return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				return 0, fmt.Errorf("BUG: there is no file %s, something wrong", newDownFileDir)
+			}
+			// compare includes and fill missed_includes or deleted includes
+			for include, included := range moduleContext.Includes {
+				Ld(fmt.Sprintf("include file %s", include))
+
+				md5, err := FileMD5(include)
+				if err != nil {
+					return 0, fmt.Errorf("error FileMD5: %w", err)
+				}
+				Ld(fmt.Sprintf("md5 %s of include %s included by %s and check in migrationIncludes", md5, include, included))
+				if _, exists := rslts.ProjectMD5Includes[md5]; !exists {
+					if _, exists := rslts.MissedIncludes[include]; !exists {
+						Ld(fmt.Sprintf("include file %s is changed or doesn't exist in migration includes", include))
+						rslts.MissedIncludes[include] = included
+						rslts.MissedIncludesCnt++
+					}
+				}
+			}
+			// strange behaviour: pair ClearingManager-roam-cdr-0.9.7~rc.5-1-1.up|down.sql save migration: .up|down.
+			fmt.Printf("pair %s.up|down.%s updating migration pair: %s.up|down.sql\n", module.Prefix, module.Ext, migrationTemplate)
+		}
+
+		md5Up, err := FileMD5(upFileDir)
+		if err != nil {
+			return 0, fmt.Errorf("error FileMD5: %w", err)
+		}
+		md5Down, err := FileMD5(downFileDir)
+		if err != nil {
+			return 0, fmt.Errorf("error FileMD5: %w", err)
+		}
+
+		md5UpDown := md5Up + md5Down
+
+		relativeUpFile := StripDir(upFileDir)
+		relativeDownFile := StripDir(downFileDir)
+
+		// fmt.Printf("writing into file %s information %s\n", newUpFileDir, fmt.Sprintf("#migration: %s;%s",
+		// 	relativeUpFile,
+		// 	md5UpDown),
+		// )
+
+		if err := updateMigration(
+			targetDirUp,
+			upFileDir,
+			fmt.Sprintf("#migration: %s;%s\n", relativeUpFile, md5UpDown),
+		); err != nil {
+			return 0, fmt.Errorf("error creating migration and writing in module: %w", err)
+		}
+		// fmt.Printf("copying from %s to %s\n", upFileDir, newUpFileDir)
+
+		// fmt.Printf("writing into file %s information %s\n", newDownFileDir, fmt.Sprintf("#migration: %s;%s",
+		// 	relativeDownFile,
+		// 	md5UpDown),
+		// )
+
+		if err := updateMigration(
+			targetDirDown,
+			downFileDir,
+			fmt.Sprintf("#migration: %s;%s\n", relativeDownFile, md5UpDown),
+		); err != nil {
+			return 0, fmt.Errorf("error creating migration and writing in module: %w", err)
+		}
+
+		// fmt.Printf("copying from %s to %s\n", downFileDir, downFileDir)
+
+		// updating a pair of migrations
+		collectedCnt = +2
+	}
+
+	return collectedCnt, nil
+}
+
+func MissedIncludes(rslts *ListResults) (int, error) {
+	collectedCnt := 0
+	// for include, included := range rslts.MissedIncludes {
+	// 	fmt.Printf("include %s included by %s", include, included)
+	// }
+	for include, included := range rslts.MissedIncludes {
+		Ld(fmt.Sprintf("include file %s", include))
+		if exists, err := FindFileViaDir(include); err != nil {
+			return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+		} else if exists {
+			md5, err := FileMD5(include)
+			if err != nil {
+				return 0, fmt.Errorf("error FileMD5: %w", err)
+			}
+			Ld(fmt.Sprintf("md5 %x of include file %s included by %s and check in rslts.ProjectIncludes", md5, include, included))
+
+			// getting project include path & name based on original include in module
+			rawInclude := include
+			marker := "migrations" + string(filepath.Separator)
+			if idx := strings.Index(rawInclude, marker); idx != -1 {
+				rawInclude = rawInclude[idx+len(marker):]
+			}
+			newIncludeFile := filepath.Join(MigrationDir, rawInclude)
+			newIncludeDir := filepath.Dir(newIncludeFile)
+
+			// if include dir doesn't exist, we create it
+			if rslt, err := FindFileViaDir(newIncludeDir); err != nil {
+				return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+			} else if !rslt {
+				if err := os.Mkdir(newIncludeDir, 0755); err != nil {
+					return 0, fmt.Errorf("error creating dir: %w", err)
+				}
+			}
+			// ngl this part seems to be inaccessible
+			if _, exists := rslts.ProjectIncludes[newIncludeFile]; exists {
+				projectMD5, err := FileMD5(newIncludeFile)
+				if err != nil {
+					return 0, fmt.Errorf("error FileMD5: %w", err)
+				}
+				if md5 != projectMD5 {
+					Lw(fmt.Sprintf("%s there is in rslts.ProjectIncludes[%s], it was changed, replace it", newIncludeFile, newIncludeFile))
+					if err := updateMigration(newIncludeFile, include, ""); err != nil {
+						return 0, fmt.Errorf("error updating include: %w", err)
+					}
+					collectedCnt++
+				}
+			} else {
+				fmt.Printf("add include file %s\n", include)
+
+				if exists, err := FindFileViaDir(newIncludeFile); err != nil {
+					return 0, fmt.Errorf("error FindFileViaDir: %w", err)
+				} else if !exists {
+					if err := os.WriteFile(newIncludeFile, []byte{}, 0644); err != nil {
+						return 0, fmt.Errorf("error creating file: %w", err)
+					}
+				} else if exists {
+					if err := os.Truncate(newIncludeFile, 0); err != nil {
+						return 0, fmt.Errorf("error zeroing file: %w", err)
+					}
+				}
+
+				if err := updateMigration(newIncludeFile, include, ""); err != nil {
+					return 0, fmt.Errorf("error adding include: %w", err)
+				}
+				collectedCnt++
+			}
+		} else {
+			// if module include is missing, then we can't use it to fulfill missing project include
+			Le(fmt.Sprintf("module include %s is missing, can't collect missing project include", include))
+			continue
+		}
+	}
+	return collectedCnt, nil
+}
+
+func DeletedIncludes(rslts *ListResults) (int, error) {
+	collectedCnt := 0
+	for include, included := range rslts.DeletedIncludes {
+		fmt.Printf("include file %s included by %s\n", include, included)
+		// check if file exists in rslts.ProjectIncludes, if included by something else, then do not delete
+		_, exists1 := rslts.ProjectIncludes[include]
+		_, exists2 := rslts.ModuleIncludes[include]
+		if !exists1 && !exists2 {
+			// WARNING: dangerous operation, check before delete
+			if fileInfo, err := os.Stat(include); err == nil && fileInfo.Mode().IsRegular() {
+				Lw(fmt.Sprintf("deleting include %s", include))
+				if err := os.Remove(include); err != nil {
+					return collectedCnt, fmt.Errorf("failed to delete: %w", err)
+				}
+				collectedCnt++
+			}
+		}
+	}
+	return collectedCnt, nil
+}
+
+func DeletedFiles(rslts *ListResults) (int, error) {
+	collectedCnt := 0
+	for project := range rslts.DeletedFiles {
+		// WARNING dangerous operation, check if migration file is a regular file
+		if fileInfo, err := os.Stat(project); err == nil && fileInfo.Mode().IsRegular() {
+			Lw(fmt.Sprintf("deleting %s", project))
+			if err := os.Remove(project); err != nil {
+				return collectedCnt, fmt.Errorf("failed to remove file: %w", err)
+			}
+		}
+	}
+
+	return collectedCnt, nil
+}
+
+func MissedPairs(rslts *ListResults) (int, error) {
+	collectedCnt := 0
+	for missed := range rslts.MissedPairs {
+		matches := ValidationPattern.FindStringSubmatch(missed)
+		if matches == nil {
+			Le("wrong format of migration")
+			continue
+		}
+		kind := matches[2]
+
+		var modulePrefix string
+		var moduleMD5 string
+		var moduleDir string
+
+		for target, meta := range rslts.ModuleMigrations {
+			if meta.DownFileName == missed || meta.UpFileName == missed {
+				modulePrefix = target
+				break
+			}
+		}
+		for md5, meta := range rslts.ProjectMigrations {
+			if meta.Prefix == modulePrefix {
+				moduleMD5 = md5
+				moduleDir = meta.Dir
+				break
+			}
+		}
+		if modulePrefix == "" || moduleMD5 == "" {
+			return collectedCnt, fmt.Errorf("couldn't find info necessary to collect missed pair %s", missed)
+		}
+		targetModuleFileName := fmt.Sprintf("%s.%s.sql", modulePrefix, kind)
+		targetModuleFile := filepath.Join(moduleDir, targetModuleFileName)
+		missingProjectFile := filepath.Join(MigrationDir, missed)
+
+		if err := os.WriteFile(missingProjectFile, []byte{}, 0644); err != nil {
+			return collectedCnt, fmt.Errorf("error creating file: %w", err)
+		}
+		if err := updateMigration(
+			missingProjectFile,
+			targetModuleFile,
+			fmt.Sprintf("#migration: %s;%s\n", targetModuleFile, moduleMD5),
+		); err != nil {
+			return collectedCnt, fmt.Errorf("error creating migration and writing in module: %w", err)
+		}
+	}
+
+	return collectedCnt, nil
+}
+
+func MigrationValidation(path string) error {
+	wrongFilesCnt := 0
+	migrations := make(map[string]string)
+	projectContext := NewParseContext()
+
+	var files []string
+
+	err := filepath.WalkDir(path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("error walking dir: %w", err)
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		if strings.HasSuffix(path, "README.md") || strings.HasSuffix(path, ".txt") {
+			return nil
+		}
+		Ld(fmt.Sprintf("found file at %s", path))
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("error walking dir: %w", err)
+	}
+
+	for _, file := range files {
+		fileName := filepath.Base(file)
+		migrations[fileName] = file
+		// ld "file ${file_name} check name is correct $file"
+		Ld(fmt.Sprintf("file %s check if name is correct %s", fileName, file))
+		if ValidationPattern.MatchString(fileName) {
+			if err := ParseIncludes(projectContext, file, ""); err != nil {
+				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
+			}
+			if len(projectContext.Errors) != 0 {
+				for _, e := range projectContext.Errors {
+					Lw(fmt.Sprintf("non-critical error: %s", e))
+				}
+			}
+			if len(projectContext.MissingFiles) != 0 {
+				Lw("deleted Includes:")
+				for include := range projectContext.MissingFiles {
+					fmt.Println(include)
+					wrongFilesCnt++
+					// rslts.DeletedIncludesCnt++
+				}
+			}
+		}
+	}
+
+	for fileName, fileDir := range migrations {
+		relative := strings.TrimPrefix(fileDir, path+"/")
+		matches := ValidationPattern.FindStringSubmatch(fileName)
+		if matches == nil {
+			if _, exists := projectContext.Includes[relative]; !exists {
+				// undefined includes crawl in here and activate Le; I think that's not how it's supposed to work
+				Le(fmt.Sprintf("%s wrong file name suffix expect .up.sql or .down.sql", fileName))
+				wrongFilesCnt++
+				continue
+			}
+			continue
+		}
+
+		prefix := matches[1]
+		suffix := matches[2]
+
+		var counterpart string
+		if suffix == "up" {
+			counterpart = prefix + ".down.sql"
+		} else {
+			counterpart = prefix + ".up.sql"
+		}
+		Ld(fmt.Sprintf("file %s check if counterpart %s exists", fileName, counterpart))
+		if _, exists := migrations[counterpart]; !exists {
+			Le(fmt.Sprintf("%s counterpart %s not found", fileName, counterpart))
+			wrongFilesCnt++
+		}
+	}
+	if wrongFilesCnt != 0 {
+		return fmt.Errorf("there are (%d) wrong files", wrongFilesCnt)
+	}
+	return nil
+}
+
+func updateMigration(newFilePath, srcFilePath, header string) error {
+	newFile, err := os.OpenFile(newFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	if _, err = newFile.WriteString(header); err != nil {
+		return err
+	}
+
+	srcFile, err := os.Open(srcFilePath)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	if _, err = io.Copy(newFile, srcFile); err != nil {
+		return err
+	}
+
+	return nil
+}

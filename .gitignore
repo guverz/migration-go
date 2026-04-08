@@ -3,3 +3,4 @@
 migration.template.sql
 /temp
 exs.md
+migration.sh
