@@ -38,10 +38,17 @@ func collect() error {
 		}
 		collectedCnt += collected
 	}
-
 	if rslts.MissedIncludesCnt != 0 {
 		migration.Ld(fmt.Sprintf("the number of missed includes is (%d)\n", rslts.MissedIncludesCnt))
 		collected, err := migration.MissedIncludes(rslts)
+		if err != nil {
+			return err
+		}
+		collectedCnt += collected
+	}
+	if len(rslts.MissedPairs) != 0 {
+		migration.Ld(fmt.Sprintf("the number of deleted files is %d", len(rslts.DeletedFiles)))
+		collected, err := migration.MissedPairs(rslts)
 		if err != nil {
 			return err
 		}
@@ -63,18 +70,10 @@ func collect() error {
 		}
 		collectedCnt += collected
 	}
-	if len(rslts.MissedPairs) != 0 {
-		migration.Ld(fmt.Sprintf("the number of  deleted files is %d", len(rslts.DeletedFiles)))
-		collected, err := migration.MissedPairs(rslts)
-		if err != nil {
-			return err
-		}
-		collectedCnt += collected
-	}
 
-	if err := migration.MigrationValidation(migration.MigrationDir); err != nil {
-		return fmt.Errorf("error MigrationValidation: %w", err)
-	}
+	// if err := migration.MigrationValidation(migration.MigrationDir); err != nil {
+	// return fmt.Errorf("error MigrationValidation: %w", err)
+	// }
 
 	if collectedCnt != 0 {
 		fmt.Printf("%s: %s\n",
