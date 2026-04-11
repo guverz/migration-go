@@ -1,8 +1,9 @@
 package cmd
 
 import (
-	"cobra-migration/pkg/migration"
 	"fmt"
+
+	"github.com/guverz/migration-go/pkg/migration"
 
 	"github.com/spf13/cobra"
 )

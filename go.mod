@@ -1,4 +1,4 @@
-module cobra-migration
+module github.com/guverz/migration-go
 
 go 1.25.0
 

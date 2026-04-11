@@ -29,7 +29,7 @@ func FileMD5(path string) (string, error) {
 }
 
 func StripDir(fileDir string) string {
-	temp := filepath.Clean(fileDir)
-	tempSl := strings.Split(temp, string(filepath.Separator))
-	return strings.Join(tempSl[1:], string(filepath.Separator))
+	cleanDir := filepath.Clean(fileDir)
+	dirSplit := strings.Split(cleanDir, string(filepath.Separator))
+	return strings.Join(dirSplit[1:], string(filepath.Separator))
 }

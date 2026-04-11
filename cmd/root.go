@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"cobra-migration/pkg/migration"
+	"github.com/guverz/migration-go/pkg/migration"
 
 	"github.com/spf13/cobra"
 )
