@@ -85,6 +85,13 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 	rslts.ModuleMigrations = make(map[string]Meta)
 
+	// ConcLimit is 0 when config was not loaded (e.g. unit tests): an unbuffered chan would
+	// block forever on the first "sem <- struct{}{}" before any goroutine can receive.
+	concLimit := ConcLimit
+	if concLimit < 1 {
+		concLimit = 4
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("failed to read directory %s: %w", dir, err)
@@ -101,7 +108,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 		errOnce  sync.Once
 		firstErr error
 	)
-	sem := make(chan struct{}, ConcLimit)
+	sem := make(chan struct{}, concLimit)
 
 	setErr := func(err error) {
 		if err == nil {
@@ -113,6 +120,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 	}
 
 	for _, entry := range entries {
+		entry := entry
 		wg.Add(1)
 		sem <- struct{}{}
 
@@ -492,7 +500,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 	MigrationDirName := filepath.Base(dir)
 	// for each git submodule
 	for _, moduleDir := range moduleDirSlice {
-		moduleProject := ""
+		// moduleProject := ""
 		moduleMigration := filepath.Join(moduleDir, MigrationDirName)
 		entries, err := os.ReadDir(moduleMigration)
 		if err != nil {
@@ -502,11 +510,12 @@ func MigrationList(dir string, rslts *ListResults) error {
 				return fmt.Errorf("reading directory error: %w", err)
 			}
 		}
-		moduleProject, err = GetProject(moduleDir, dir)
-		if err != nil {
-			return fmt.Errorf("getProject failed: %w", err)
-		}
-		Ld(fmt.Sprintf("submodule project %s", moduleProject))
+		// (!) Until version-go is updated, GetProject function is commented out
+		// moduleProject, err = GetProject(moduleDir, dir)
+		// if err != nil {
+		// 	return fmt.Errorf("getProject failed: %w", err)
+		// }
+		// Ld(fmt.Sprintf("submodule project %s", moduleProject))
 
 		fileMap := make(map[string]bool, len(entries))
 		for _, entry := range entries {
@@ -518,7 +527,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 			errOnceSub  sync.Once
 			firstErrSub error
 		)
-		semSub := make(chan struct{}, ConcLimit)
+		semSub := make(chan struct{}, concLimit)
 
 		setErrSub := func(err error) {
 			if err == nil {
@@ -530,6 +539,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 		}
 
 		for _, entry := range entries {
+			entry := entry
 			wgSub.Add(1)
 			semSub <- struct{}{}
 
@@ -546,10 +556,11 @@ func MigrationList(dir string, rslts *ListResults) error {
 				modulePrefix, moduleExt := matches[1], matches[2]
 
 				// seems like obsolete check
-				if !strings.HasPrefix(entry.Name(), moduleProject) {
-					Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
-					modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
-				}
+				// (!)
+				// if !strings.HasPrefix(entry.Name(), moduleProject) {
+				// 	Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
+				// 	modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
+				// }
 
 				upFileName := fmt.Sprintf("%s.up.%s", modulePrefix, moduleExt)
 				downFileName := fmt.Sprintf("%s.down.%s", modulePrefix, moduleExt)
@@ -609,7 +620,7 @@ func MigrationList(dir string, rslts *ListResults) error {
 						setErrSub(fmt.Errorf("error ParseIncludes: %w", err))
 						return
 					}
-					if err := ParseIncludes(missedModuleContext, fileDirUp, ""); err != nil {
+					if err := ParseIncludes(missedModuleContext, fileDirDown, ""); err != nil {
 						setErrSub(fmt.Errorf("error ParseIncludes: %w", err))
 						return
 					}
