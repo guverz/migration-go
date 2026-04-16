@@ -495,12 +495,12 @@ func MigrationList(dir string, rslts *ListResults) error {
 	// getting submodule dir
 	moduleDirSlice, err := GetModuleDir(dir)
 	if err != nil {
-		return fmt.Errorf("getSubmoduleDir failed: %w", err)
+		return fmt.Errorf("getModuleDir failed: %w", err)
 	}
 	MigrationDirName := filepath.Base(dir)
 	// for each git submodule
 	for _, moduleDir := range moduleDirSlice {
-		// moduleProject := ""
+		moduleProject := ""
 		moduleMigration := filepath.Join(moduleDir, MigrationDirName)
 		entries, err := os.ReadDir(moduleMigration)
 		if err != nil {
@@ -510,12 +510,15 @@ func MigrationList(dir string, rslts *ListResults) error {
 				return fmt.Errorf("reading directory error: %w", err)
 			}
 		}
-		// (!) Until version-go is updated, GetProject function is commented out
-		// moduleProject, err = GetProject(moduleDir, dir)
-		// if err != nil {
-		// 	return fmt.Errorf("getProject failed: %w", err)
-		// }
-		// Ld(fmt.Sprintf("submodule project %s", moduleProject))
+		if filepath.Base(moduleDir) == "ddl" {
+			// I think I don't need to check ddl directory
+			continue
+		}
+		moduleProject, err = Describe(moduleDir, "project")
+		if err != nil {
+			return fmt.Errorf("describing module project failed: %w", err)
+		}
+		Ld(fmt.Sprintf("module project %s", moduleProject))
 
 		fileMap := make(map[string]bool, len(entries))
 		for _, entry := range entries {
@@ -557,10 +560,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 				// seems like obsolete check
 				// (!)
-				// if !strings.HasPrefix(entry.Name(), moduleProject) {
-				// 	Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
-				// 	modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
-				// }
+				if !strings.HasPrefix(entry.Name(), moduleProject) {
+					Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
+					modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
+				}
 
 				upFileName := fmt.Sprintf("%s.up.%s", modulePrefix, moduleExt)
 				downFileName := fmt.Sprintf("%s.down.%s", modulePrefix, moduleExt)

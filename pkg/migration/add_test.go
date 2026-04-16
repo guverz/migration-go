@@ -131,55 +131,93 @@ func TestFindLastMigrationInfo(t *testing.T) {
 	}
 }
 
-// func TestCreateMigrationFiles(t *testing.T) {
-// 	tests := []struct {
-// 		name         string
-// 		setup        func(t *testing.T) (string, string)
-// 		wantMax      int
-// 		wantLastFile string
-// 		wantErr      bool
-// 	}{
-// 		{
-// 			name: "normal",
-// 			setup: func(t *testing.T) (string, string) {
-// 				tmpDir, err := os.MkdirTemp("", "test_find_last_migration_*")
-// 				if err != nil {
-// 					t.Fatalf("Failed to create dir: %v", err)
-// 				}
-// 				t.Cleanup(func() {
-// 					os.RemoveAll(tmpDir)
-// 				})
-// 				base := "test-func-0.1.0-1"
-// 				for i := 1; i < 12; i++ {
-// 					fileUp := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.up.sql", base, i))
-// 					fileDown := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.down.sql", base, i))
-// 					os.WriteFile(fileUp, []byte(""), 0644)
-// 					os.WriteFile(fileDown, []byte(""), 0644)
-// 				}
-// 				return base, tmpDir
-// 			},
-// 			wantMax:      11,
-// 			wantLastFile: "test-func-0.1.0-1-11.up.sql",
-// 			wantErr:      false,
-// 		},
-// 	}
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			baseName, tmpDir := tt.setup(t)
+func TestCreateMigrationFiles(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T) (string, string, bool)
+		wantExists bool
+		wantErr    bool
+	}{
+		{
+			name: "normal",
+			setup: func(t *testing.T) (string, string, bool) {
+				tmpDir, err := os.MkdirTemp("", "test_create_migration_files_*")
+				if err != nil {
+					t.Fatalf("Failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					os.RemoveAll(tmpDir)
+				})
+				base := "test-func-0.1.0-1"
+				includeHelp := false
+				return base, tmpDir, includeHelp
+			},
+			wantExists: true,
+			wantErr:    false,
+		},
+		{
+			name: "no dir",
+			setup: func(t *testing.T) (string, string, bool) {
+				tmpDir := "noDir"
+				base := "test-func-0.1.0-1"
+				includeHelp := false
+				return base, tmpDir, includeHelp
+			},
+			wantExists: true,
+			wantErr:    false,
+		},
+		{
+			name: "no IncludeHelp",
+			setup: func(t *testing.T) (string, string, bool) {
+				tmpDir, err := os.MkdirTemp("", "test_create_migration_files_*")
+				if err != nil {
+					t.Fatalf("Failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					os.RemoveAll(tmpDir)
+				})
+				base := "test-func-0.1.0-1"
+				includeHelp := true
+				return base, tmpDir, includeHelp
+			},
+			wantExists: false,
+			wantErr:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseName, tmpDir, help := tt.setup(t)
+			t.Cleanup(func() {
+				os.RemoveAll(tmpDir)
+			})
+			err := createMigrationFiles(tmpDir, baseName, help)
+			upFile := filepath.Join(tmpDir, fmt.Sprintf("%s.up.sql", baseName))
+			downFile := filepath.Join(tmpDir, fmt.Sprintf("%s.down.sql", baseName))
 
-// 			foundMax, foundLast, err := findLastMigrationInfo(tmpDir, baseName)
+			rsltUp, _ := FindFileViaDir(upFile)
+			rsltDown, _ := FindFileViaDir(downFile)
+			var result bool
+			if rsltUp && rsltDown {
+				result = true
+			} else if !rsltUp && !rsltDown {
+				result = false
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("createMigrationFiles() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 
-// 			if (err != nil) != tt.wantErr {
-// 				t.Errorf("findLastMigrationInfo() error = %v, wantErr %v", err, tt.wantErr)
-// 				return
-// 			}
+			if result != tt.wantExists {
+				t.Errorf("createMigrationFiles() found newly created files = %v, want %v", result, tt.wantExists)
+			}
+		})
+	}
+}
 
-// 			if foundMax != tt.wantMax {
-// 				t.Errorf("findLastMigrationInfo() found = %v, want %v", foundMax, tt.wantMax)
-// 			}
-// 			if foundLast != tt.wantLastFile {
-// 				t.Errorf("findLastMigrationInfo() found = %v, want %v", foundLast, tt.wantLastFile)
-// 			}
-// 		})
-// 	}
-// }
+func TestAdd(t *testing.T) {
+
+}
+
+func TestMiniHelp(t *testing.T) {
+
+}

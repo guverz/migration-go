@@ -147,7 +147,7 @@ func MissedFiles(rslts *ListResults) (int, error) {
 		// fmt.Printf("copying from %s to %s\n", downFileDir, downFileDir)
 
 		// updating a pair of migrations
-		collectedCnt = +2
+		collectedCnt += 2
 	}
 
 	return collectedCnt, nil

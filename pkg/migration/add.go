@@ -45,10 +45,15 @@ func createMigrationFiles(dir, baseName string, includeHelp bool) error {
 	}
 
 	upContent := fmt.Sprintf("# %s.up.sql\n", baseName)
-	GetMiniHelp, err := minihelp()
-	if err != nil {
-		return fmt.Errorf("error getting minihelp: %w", err)
+	GetMiniHelp := ""
+	if includeHelp {
+		var err error
+		GetMiniHelp, err = minihelp()
+		if err != nil {
+			return fmt.Errorf("error getting minihelp: %w", err)
+		}
 	}
+
 	if includeHelp {
 		upContent += GetMiniHelp + "\n"
 	}
