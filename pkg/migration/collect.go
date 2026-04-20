@@ -355,11 +355,6 @@ func MigrationValidation(path string) error {
 			if err := ParseIncludes(projectContext, file, ""); err != nil {
 				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
 			}
-			if len(projectContext.Errors) != 0 {
-				for _, e := range projectContext.Errors {
-					Lw(fmt.Sprintf("non-critical error: %s", e))
-				}
-			}
 			if len(projectContext.MissingFiles) != 0 {
 				Lw("deleted Includes:")
 				for include := range projectContext.MissingFiles {

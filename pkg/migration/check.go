@@ -26,7 +26,6 @@ type ParseContext struct {
 	Includes map[string]string
 
 	MissingFiles map[string]string // key - include; value - included
-	Errors       []error
 }
 
 func NewParseContext() *ParseContext {
@@ -169,15 +168,6 @@ func MigrationList(dir string, rslts *ListResults) error {
 				}
 			}
 
-			if len(projectContext.Errors) != 0 {
-				for _, e := range projectContext.Errors {
-					mu.Lock()
-					rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-					mu.Unlock()
-					// Lw(fmt.Sprintf("non-critical error: %s", e))
-				}
-			}
-
 			file, err := os.Open(fileDirUp)
 			if err != nil {
 				setErr(fmt.Errorf("error opening dir: %w", err))
@@ -300,24 +290,12 @@ func MigrationList(dir string, rslts *ListResults) error {
 						setErr(fmt.Errorf("parseIncludes error: %w", err))
 						return
 					}
-					if len(moduleContext.Errors) != 0 {
-						for _, e := range moduleContext.Errors {
-							// Lw(fmt.Sprintf("non-critical error: %s", e))
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-							mu.Unlock()
-						}
-					}
 					for include, included := range moduleContext.MissingFiles {
-						// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
-						if included == "" {
-							continue
-						} else {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-							mu.Unlock()
-							// Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-						}
+						mu.Lock()
+						rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+						mu.Unlock()
+						// Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+
 						// this is an error caused by developer, he should fix it by himself (or we can try to delete the @include line in the migration file of the module)
 					}
 					// project include is literally missing
@@ -506,9 +484,8 @@ func MigrationList(dir string, rslts *ListResults) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
-			} else {
-				return fmt.Errorf("reading directory error: %w", err)
 			}
+			return fmt.Errorf("reading directory error: %w", err)
 		}
 		if filepath.Base(moduleDir) == "ddl" {
 			// I think I don't need to check ddl directory
@@ -627,23 +604,10 @@ func MigrationList(dir string, rslts *ListResults) error {
 						setErrSub(fmt.Errorf("error ParseIncludes: %w", err))
 						return
 					}
-					if len(missedModuleContext.Errors) != 0 {
-						for _, e := range missedModuleContext.Errors {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-							mu.Unlock()
-						}
-					}
 					for include, included := range missedModuleContext.MissingFiles {
-						// this commend sounds to be bs but let it be, i made this '== ""' exception for a reason
-						// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
-						if included == "" {
-							continue
-						} else {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-							mu.Unlock()
-						}
+						mu.Lock()
+						rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+						mu.Unlock()
 					}
 					for include, included := range missedModuleContext.Includes {
 						Ld(fmt.Sprintf("include file %s", include))
@@ -701,6 +665,10 @@ func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 	file, err := os.Open(fileDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// current = "" if fileDir is not an include
+			if current == "" {
+				return nil
+			}
 			delete(ctx.Includes, fileDir)
 			ctx.MissingFiles[fileDir] = current
 			return nil

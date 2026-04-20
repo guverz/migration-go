@@ -75,15 +75,17 @@ func check() error {
 		}
 	}
 
-	if collect {
+	switch {
+	case collect:
 		return fmt.Errorf("use collect command")
 		// fmt.Println("do: scripts/migration collect")
-	} else if len(rslt.LostPairs) != 0 {
+	case len(rslt.LostPairs) != 0:
 		return fmt.Errorf("only lost pairs left, fix it by hand")
-	} else {
+	default:
 		fmt.Printf("%s: No errors!\n",
 			migration.Colorize("[OK]", migration.Green),
 		)
 	}
+
 	return nil
 }

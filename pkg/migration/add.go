@@ -111,7 +111,7 @@ func Add(includeFlag bool) (string, error) {
 func minihelp() (string, error) {
 	text, err := os.ReadFile(MiniHelpDir)
 	if err != nil {
-		return "", fmt.Errorf("Error reading MiniHelp: %v", err)
+		return "", fmt.Errorf("error reading MiniHelp: %v", err)
 	}
 	return string(text), nil
 }
