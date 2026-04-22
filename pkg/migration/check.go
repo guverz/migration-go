@@ -66,10 +66,6 @@ type ListResults struct {
 }
 
 func MigrationList(dir string, rslts *ListResults) error {
-	// *rslts = *NewListResults()
-	rslts.MissedIncludesCnt = 0
-	rslts.DeletedIncludesCnt = 0
-
 	rslts.MissedPairs = make(map[string]string)
 	rslts.LostPairs = make(map[string]string)
 
@@ -149,23 +145,14 @@ func MigrationList(dir string, rslts *ListResults) error {
 				mu.Lock()
 				rslts.LostPairs[downFileName] = entry.Name()
 				mu.Unlock()
-				// because downFile is missing, only upFile is being parsed for includes
-				if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
-				// Lw(fmt.Sprintf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-				// setErr(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-				// return
-			} else {
-				if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
-				if err := ParseIncludes(projectContext, fileDirDown, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
+			}
+			if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
+				setErr(fmt.Errorf("ParseIncludes error: %w", err))
+				return
+			}
+			if err := ParseIncludes(projectContext, fileDirDown, ""); err != nil {
+				setErr(fmt.Errorf("ParseIncludes error: %w", err))
+				return
 			}
 
 			file, err := os.Open(fileDirUp)
@@ -466,8 +453,6 @@ func MigrationList(dir string, rslts *ListResults) error {
 	}
 
 	// list submodules migrations to find uncollected or changed files
-
-	rslts.MissedFilesCnt = 0
 	rslts.MissedFiles = make(map[string]Meta)
 
 	// getting submodule dir
@@ -488,12 +473,17 @@ func MigrationList(dir string, rslts *ListResults) error {
 			return fmt.Errorf("reading directory error: %w", err)
 		}
 		if filepath.Base(moduleDir) == "ddl" {
-			// I think I don't need to check ddl directory
-			continue
-		}
-		moduleProject, err = Describe(moduleDir, "project")
-		if err != nil {
-			return fmt.Errorf("describing module project failed: %w", err)
+			baseFull, err := Describe(dir, "project")
+			if err != nil {
+				return fmt.Errorf("error describing dir: %w", err)
+			}
+			baseCut, _, _ := strings.Cut(baseFull, "-")
+			moduleProject = fmt.Sprintf("%s-ddl", baseCut)
+		} else {
+			moduleProject, err = Describe(moduleDir, "project")
+			if err != nil {
+				return fmt.Errorf("describing module project failed: %w", err)
+			}
 		}
 		Ld(fmt.Sprintf("module project %s", moduleProject))
 
@@ -535,8 +525,6 @@ func MigrationList(dir string, rslts *ListResults) error {
 
 				modulePrefix, moduleExt := matches[1], matches[2]
 
-				// seems like obsolete check
-				// (!)
 				if !strings.HasPrefix(entry.Name(), moduleProject) {
 					Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
 					modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
