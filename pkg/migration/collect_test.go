@@ -248,8 +248,11 @@ func TestMissedFiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			migrationRelDir := tt.setup(t)
 
-			rslts := &ListResults{}
-			MigrationList(migrationRelDir, rslts)
+			rslts, err := MigrationList(migrationRelDir)
+			if err != nil {
+				t.Errorf("migrationList failed: %w", err)
+				return
+			}
 
 			collected, err := MissedFiles(rslts)
 			if (err != nil) != tt.wantErr {

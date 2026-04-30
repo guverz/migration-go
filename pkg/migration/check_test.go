@@ -554,24 +554,22 @@ func TestMigrationList(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			migrationRelDir := tt.setup(t)
 
-			rslts := &ListResults{}
-
-			err := MigrationList(migrationRelDir, rslts)
+			rslts, err := MigrationList(migrationRelDir)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MigrationList() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if rslts.DeletedFilesCnt != tt.wantDeletedFiles {
-				t.Errorf("MigrationList() DeletedFilesCnt = %v, want %v", rslts.DeletedFilesCnt, tt.wantDeletedFiles)
+			if len(rslts.DeletedFiles) != tt.wantDeletedFiles {
+				t.Errorf("MigrationList() DeletedFilesCnt = %v, want %v", len(rslts.DeletedFiles), tt.wantDeletedFiles)
 			}
-			if rslts.DeletedIncludesCnt != tt.wantDeletedIncludes {
-				t.Errorf("MigrationList() DeletedIncludesCnt = %v, want %v", rslts.DeletedIncludesCnt, tt.wantDeletedIncludes)
+			if len(rslts.DeletedIncludes) != tt.wantDeletedIncludes {
+				t.Errorf("MigrationList() DeletedIncludesCnt = %v, want %v", len(rslts.DeletedIncludes), tt.wantDeletedIncludes)
 			}
-			if rslts.MissedIncludesCnt != tt.wantMissedIncludes {
-				t.Errorf("MigrationList() MissedIncludesCnt = %v, want %v", rslts.MissedIncludesCnt, tt.wantMissedIncludes)
+			if len(rslts.MissedIncludes) != tt.wantMissedIncludes {
+				t.Errorf("MigrationList() MissedIncludesCnt = %v, want %v", len(rslts.MissedIncludes), tt.wantMissedIncludes)
 			}
-			if rslts.MissedFilesCnt != tt.wantMissedFiles {
-				t.Errorf("MigrationList() MissedFilesCnt = %v, want %v", rslts.MissedFilesCnt, tt.wantMissedFiles)
+			if len(rslts.MissedFiles) != tt.wantMissedFiles {
+				t.Errorf("MigrationList() MissedFilesCnt = %v, want %v", len(rslts.MissedFiles), tt.wantMissedFiles)
 			}
 			if len(rslts.LostPairs) != tt.wantLostPairs {
 				t.Errorf("MigrationList() LostPairsCnt = %v, want %v", len(rslts.LostPairs), tt.wantLostPairs)

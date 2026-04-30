@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 )
 
 var (
-	IncludePattern = regexp.MustCompile(`^@([^;]+)`)
-	ListPattern    = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+	IncludePattern    = regexp.MustCompile(`^@([^;]+)`)
+	ListPattern       = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+	SecondListPattern = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+)$`)
 )
 
 var (
@@ -26,7 +26,6 @@ type ParseContext struct {
 	Includes map[string]string
 
 	MissingFiles map[string]string // key - include; value - included
-	Errors       []error
 }
 
 func NewParseContext() *ParseContext {
@@ -37,7 +36,24 @@ func NewParseContext() *ParseContext {
 	}
 }
 
-type Meta struct {
+type ListResults struct {
+	ListWarnings []string // list of non-critical errors
+
+	LostPairs       map[string]string        // key - missed migration file, value - existing pair
+	MissedPairs     map[string]string        // key - missed migration file, value - existing pair
+	DeletedFiles    map[string]string        // key - project migration, value - module migration (module file is missing)
+	DeletedIncludes map[string]string        // key - include, value - included (include is being included; included includes)
+	MissedIncludes  map[string]string        // key - include, value - included
+	MissedFiles     map[string]MigrationInfo // key - upName of module file, value - MigrationInfo of that module file
+
+	ProjectMigrations  map[string]MigrationInfo // key - MD5, value - MigrationInfo of any original migration pair (map of original migration files (have no meta))
+	ModuleMigrations   map[string]MigrationInfo // key - prefix of original migration file, value - MigrationInfo of migration file that references original
+	ProjectIncludes    map[string]string        // key - include, value - included; include of project migration file (migration file has no meta)
+	ModuleIncludes     map[string]string        // key - include, value - included; include of module migration file
+	ProjectMD5Includes map[string]string        // key - MD5, value - include; md5 of includes used in the project directory
+}
+
+type MigrationInfo struct {
 	Prefix       string
 	Ext          string
 	Dir          string
@@ -45,639 +61,826 @@ type Meta struct {
 	DownFileName string
 }
 
-type ListResults struct {
-	ListWarnings []string // list of non-critical errors
-
-	LostPairs          map[string]string // key - missed migration file, value - existing pair
-	MissedPairs        map[string]string // key - missed migration file, value - existing pair
-	DeletedFilesCnt    int               // counters seems to be obsolete (?)
-	DeletedIncludesCnt int               //
-	MissedIncludesCnt  int               //
-	MissedFilesCnt     int               //
-	DeletedFiles       map[string]string // key - project migration, value - module migration
-	DeletedIncludes    map[string]string // key - include, value - included (include is being included; included includes)
-	MissedIncludes     map[string]string // key - include, value - included
-	MissedFiles        map[string]Meta   // key - upFileName, value - Meta
-
-	ProjectMigrations  map[string]Meta   // key - MD5, value - Meta of any original migration pair
-	ModuleMigrations   map[string]Meta   // key - prefix of original migration file, value - Meta of migration copy
-	ProjectIncludes    map[string]string // key - include, value - included; include of original project migration file
-	ModuleIncludes     map[string]string // key - include, value - included; include of module migration file
-	ProjectMD5Includes map[string]string // key - MD5, value - include; md5 of includes used in project migration
+type Meta struct {
+	MetaInfo MigrationInfo
+	MD5      string
 }
 
-func MigrationList(dir string, rslts *ListResults) error {
-	// *rslts = *NewListResults()
-	rslts.MissedIncludesCnt = 0
-	rslts.DeletedIncludesCnt = 0
-
+func MigrationList(dir string) (*ListResults, error) {
+	rslts := &ListResults{}
 	rslts.MissedPairs = make(map[string]string)
 	rslts.LostPairs = make(map[string]string)
-
-	rslts.MissedIncludes = make(map[string]string)
-	rslts.DeletedIncludes = make(map[string]string)
-	rslts.ModuleIncludes = make(map[string]string)
-	rslts.ProjectIncludes = make(map[string]string)
-	rslts.DeletedFiles = make(map[string]string)
-	rslts.ProjectMD5Includes = make(map[string]string)
-
-	rslts.ProjectMigrations = make(map[string]Meta)
-
-	rslts.ModuleMigrations = make(map[string]Meta)
-
-	// ConcLimit is 0 when config was not loaded (e.g. unit tests): an unbuffered chan would
-	// block forever on the first "sem <- struct{}{}" before any goroutine can receive.
-	concLimit := ConcLimit
-	if concLimit < 1 {
-		concLimit = 4
+	// t1 := time.Now()
+	// getting project and module maps by reading migration directory
+	projectEntriesMap, err := getEntriesProjectMap(dir)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting project entries map: %w", err)
+	}
+	moduleEntriesMap, err := getEntriesModuleMap(dir)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting module entries map: %w", err)
 	}
 
+	// getting map where key - project file, value - migration info of meta file (if md5 is an empty string then that project file is an original one)
+	MetaMap, err := GetMetaMap(projectEntriesMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting slice of projects: %w", err)
+	}
+	// getting map where key - concat md5, value - migration info of module file (only files with complete pairs)
+	ModuleMap, err := GetModuleMap(moduleEntriesMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting slice of modules: %w", err)
+	}
+
+	// ProjectMigrations (?)
+	rslts.ProjectMigrations, err = getProjectMigrations(MetaMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting ProjectMigrations: %w", err)
+	}
+
+	// ModuleMigrations (?)
+	rslts.ModuleMigrations, err = getModuleMigrations(MetaMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error getting ModuleMigrations: %w", err)
+	}
+	// CHECKING PAIRS OF MIGRATION FILES
+
+	missingProjectPairs, err := checkPairs(projectEntriesMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error checking project pairs: %w", err)
+	}
+	missingModulePairs, err := checkPairs(moduleEntriesMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error checking module pairs: %w", err)
+	}
+
+	// missing pairs in modules' dirs can't be fixed, so it's being added to LostPairs immediately
+	maps.Copy(rslts.LostPairs, missingModulePairs)
+
+	// checking if missing pairs in project dir are original, if original - it can't be fixed, if based on module migration file - can be.
+	for missing, existing := range missingProjectPairs {
+		existingPath := filepath.Join(dir, existing)
+		meta := MetaMap[existingPath]
+		if meta.IsOriginal() {
+			rslts.LostPairs[missing] = existing
+		} else {
+			rslts.MissedPairs[missing] = existing
+		}
+	}
+
+	// CHECKING FOR DELETED OR MISSED MIGRATION FILES
+
+	// deletedFiles
+	rslts.DeletedFiles, err = checkDeletedFiles(MetaMap, moduleEntriesMap)
+	if err != nil {
+		return rslts, fmt.Errorf("error checking for deleted files: %w", err)
+	}
+	// missedFiles
+	rslts.MissedFiles = checkMissedFiles(rslts.ProjectMigrations, ModuleMap)
+
+	// INCLUDES
+
+	// filling in ParseContext for project, module and meta
+	mapProjectIncludes, err := getProjectIncludes(projectEntriesMap)
+	if err != nil {
+		return nil, fmt.Errorf("error getting project includes information: %w", err)
+	}
+	mapModuleIncludes, err := getModuleIncludes(moduleEntriesMap)
+	if err != nil {
+		return nil, fmt.Errorf("error getting module includes information: %w", err)
+	}
+	mapMetaIncludes, err := getMetaIncludes(MetaMap)
+	if err != nil {
+		return nil, fmt.Errorf("error getting meta includes information: %w", err)
+	}
+
+	// ProjectIncludes (?)
+	rslts.ProjectIncludes, err = fillProjectIncludes(mapProjectIncludes, MetaMap)
+	if err != nil {
+		return nil, fmt.Errorf("error getting ProjectIncludes: %w", err)
+	}
+	// ProjectMD5Includes (?)
+	rslts.ProjectMD5Includes, err = getProjectMD5Includes(mapProjectIncludes)
+	if err != nil {
+		return nil, fmt.Errorf("error getting ProjectMD5Includes: %w", err)
+	}
+	// ModuleIncludes (?)
+	rslts.ModuleIncludes, err = fillModuleIncludes(mapMetaIncludes, rslts.ProjectMD5Includes)
+	if err != nil {
+		return nil, fmt.Errorf("error getting ModuleIncludes: %w", err)
+	}
+	// DeletedIncludes
+	rslts.DeletedIncludes, err = checkDeletedIncludes(mapProjectIncludes, MetaMap)
+	if err != nil {
+		return nil, fmt.Errorf("error checking migration directory for deleted includes: %w", err)
+	}
+	// MissedIncludes
+	rslts.MissedIncludes, err = checkMissedIncludes(mapProjectIncludes, MetaMap, mapModuleIncludes)
+	if err != nil {
+		return nil, fmt.Errorf("error checking migration directory for missed includes: %w", err)
+	}
+
+	// checking missed files for includes
+	warnings, unknownIncludes, err := checkMissedFilesForIncludes(rslts.MissedFiles)
+	if err != nil {
+		return nil, fmt.Errorf("error checking missed files for unknown includes: %w", err)
+	}
+	// found that were not found parsing includes can't be automatically collected, so only warnings appear
+	rslts.ListWarnings = append(rslts.ListWarnings, warnings...)
+	// newly found includes for missed files are being added to missedIncludes
+	missedIncludes, err := processMissedFilesIncludes(rslts.ProjectMD5Includes, rslts.MissedIncludes, unknownIncludes)
+	if err != nil {
+		return nil, fmt.Errorf("error processing includes from MissedFiles: %w", err)
+	}
+	maps.Copy(rslts.MissedIncludes, missedIncludes)
+	// fmt.Println(time.Since(t1))
+	return rslts, nil
+}
+
+func processMissedFilesIncludes(projectMD5Includes map[string]string, MissedIncludes map[string]string, MissedFilesIncludes map[string]map[string]string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, missedFileIncludes := range MissedFilesIncludes {
+		for include, included := range missedFileIncludes {
+			md5, err := FileMD5(include)
+			if err != nil {
+				return nil, fmt.Errorf("error calculating MD5 of include: %w", err)
+			}
+			// check if include is already included in project directory
+			_, existsProject := projectMD5Includes[md5]
+			// check if include is already in MissedIncludes map
+			_, existsMissed := MissedIncludes[include]
+			if !existsProject && !existsMissed {
+				result[include] = included
+			}
+		}
+	}
+	return result, nil
+}
+
+func checkMissedFilesForIncludes(missedFiles map[string]MigrationInfo) ([]string, map[string]map[string]string, error) {
+	warnings := []string{}
+	newIncludes := make(map[string]map[string]string)
+	for file, moduleInfo := range missedFiles {
+		isUp := strings.HasSuffix(file, ".up.sql")
+		if !isUp {
+			continue
+		}
+		missedContext := NewParseContext()
+		missedUpPath := filepath.Join(moduleInfo.Dir, moduleInfo.UpFileName)
+		missedDownPath := filepath.Join(moduleInfo.Dir, moduleInfo.DownFileName)
+		if err := ParseIncludes(missedContext, missedUpPath, ""); err != nil {
+			return nil, nil, fmt.Errorf("error ParseIncludes: %w", err)
+		}
+		if err := ParseIncludes(missedContext, missedDownPath, ""); err != nil {
+			return nil, nil, fmt.Errorf("error ParseIncludes: %w", err)
+		}
+		for include, included := range missedContext.MissingFiles {
+			warnings = append(warnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+		}
+		newIncludes[file] = missedContext.Includes
+	}
+	return warnings, newIncludes, nil
+}
+
+func checkDeletedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map[string]Meta) (map[string]string, error) {
+	result := make(map[string]string)
+	for upPath, projectContext := range mapProjectIncludes {
+		meta := metaMap[upPath]
+		dir := filepath.Dir(upPath)
+		if meta.IsOriginal() {
+			continue
+		}
+		migrationMD5Includes := make(map[string]string)
+		for projectInclude, projectIncluded := range projectContext.Includes {
+			md5, err := FileMD5(projectInclude)
+			if err != nil {
+				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
+			}
+			migrationMD5Includes[md5] = projectInclude
+
+			includeDir, err := filepath.Rel(dir, projectInclude)
+			if err != nil {
+				return nil, fmt.Errorf("error getting relative path: %w", err)
+			}
+			metaIncludePath := filepath.Join(meta.MetaInfo.Dir, includeDir)
+			if rslt, err := FindFileViaDir(metaIncludePath); err != nil {
+				return nil, fmt.Errorf("findFileViaDir error: %w", err)
+			} else if !rslt {
+				result[projectInclude] = projectIncluded
+			}
+		}
+	}
+	return result, nil
+}
+
+func checkMissedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map[string]Meta, mapModuleIncludes map[string]ParseContext) (map[string]string, error) {
+	result := make(map[string]string)
+	for upFile, projectContext := range mapProjectIncludes {
+		meta := metaMap[upFile]
+		if meta.IsOriginal() {
+			continue
+		}
+		migrationMD5Includes := make(map[string]string)
+		for projectInclude := range projectContext.Includes {
+			md5, err := FileMD5(projectInclude)
+			if err != nil {
+				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
+			}
+			migrationMD5Includes[md5] = projectInclude
+		}
+		moduleContext := mapModuleIncludes[filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.UpFileName)]
+
+		for metaInclude, metaIncluded := range moduleContext.Includes {
+			metaMD5, err := FileMD5(metaInclude)
+			if err != nil {
+				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
+			}
+			if _, exists := migrationMD5Includes[metaMD5]; !exists {
+				result[metaInclude] = metaIncluded
+			}
+		}
+	}
+	return result, nil
+}
+
+func getModuleMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, error) {
+	rslt := make(map[string]MigrationInfo)
+	for file, meta := range metaMap {
+		isUp := strings.HasSuffix(file, ".up.sql")
+		if !isUp || meta.IsOriginal() {
+			continue
+		}
+		projectInfo, err := getProjectInfo(file)
+		if err != nil {
+			return nil, fmt.Errorf("error getting projectInfo: %w", err)
+		}
+		rslt[meta.MetaInfo.Prefix] = projectInfo
+	}
+	return rslt, nil
+}
+
+func getProjectInfo(projectPath string) (MigrationInfo, error) {
+	var (
+		prefix   string
+		ext      string
+		dir      string
+		upName   string
+		downName string
+	)
+	dir = filepath.Dir(projectPath)
+	matches := ListPattern.FindStringSubmatch(filepath.Base(projectPath))
+	if matches == nil {
+		return MigrationInfo{}, fmt.Errorf("wrong file name: %s", filepath.Base(projectPath))
+	}
+	prefix, ext = matches[1], matches[2]
+	upName = prefix + ".up." + ext
+	downName = prefix + ".down." + ext
+
+	return MigrationInfo{
+		Prefix:       prefix,
+		Ext:          ext,
+		Dir:          dir,
+		UpFileName:   upName,
+		DownFileName: downName,
+	}, nil
+}
+
+func getProjectMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, error) {
+	rslt := make(map[string]MigrationInfo)
+	for file, meta := range metaMap {
+		fileName := filepath.Base(file)
+		matches := ListPattern.FindStringSubmatch(fileName)
+		if matches == nil {
+			continue
+		}
+		// if meta.IsEmpty == true then that file has no meta, therefore migrationInfo needs to be calculated
+		if meta.IsOriginal() {
+			prefix, ext := matches[1], matches[2]
+			dir := filepath.Dir(file)
+			upName := prefix + ".up." + ext
+			downName := prefix + ".down." + ext
+			upPath := filepath.Join(dir, upName)
+			downPath := filepath.Join(dir, downName)
+
+			md5, err := ConcatMD5(upPath, downPath)
+			if err != nil {
+				return rslt, fmt.Errorf("error getting concat of MD5: %w", err)
+			}
+			// md5 is empty if migration pair is incomplete
+			if md5 == "" {
+				continue
+			}
+			rslt[md5] = MigrationInfo{
+				Prefix:       prefix,
+				Ext:          ext,
+				Dir:          dir,
+				UpFileName:   upName,
+				DownFileName: downName,
+			}
+		} else {
+			rslt[meta.MD5] = meta.MetaInfo
+		}
+	}
+	return rslt, nil
+}
+
+func fillProjectIncludes(projectContextMap map[string]ParseContext, metaMap map[string]Meta) (map[string]string, error) {
+	rslt := make(map[string]string)
+	for upFile, projectContext := range projectContextMap {
+		meta := metaMap[upFile]
+		if meta.IsOriginal() {
+			maps.Copy(rslt, projectContext.Includes)
+		}
+	}
+	return rslt, nil
+}
+
+// getting ListResults field - ModuleIncludes
+func fillModuleIncludes(moduleContextMap map[string]ParseContext, projectMD5Includes map[string]string) (map[string]string, error) {
+	ModuleIncludes := make(map[string]string)
+	for _, ModuleContext := range moduleContextMap {
+		for include, included := range ModuleContext.Includes {
+			md5, err := FileMD5(include)
+			if err != nil {
+				return nil, fmt.Errorf("error calculating md5 of include: %w", err)
+			}
+			if _, exists := projectMD5Includes[md5]; exists {
+				ModuleIncludes[include] = included
+			}
+		}
+	}
+	return ModuleIncludes, nil
+}
+
+// check if project includes are the same as module includes
+// func checkMissedIncludesForChanges(moduleContextMap map[string]ParseContext, ProjectMD5Includes map[string]string) (map[string]string, error) {
+// 	MissedIncludes := make(map[string]string)
+// 	for _, ModuleContext := range moduleContextMap {
+// 		for include, included := range ModuleContext.Includes {
+// 			md5, err := FileMD5(include)
+// 			if err != nil {
+// 				return MissedIncludes, fmt.Errorf("error calculating md5 of include: %w", err)
+// 			}
+// 			if _, exists := ProjectMD5Includes[md5]; !exists {
+// 				MissedIncludes[include] = included
+// 			}
+// 		}
+// 	}
+// 	return MissedIncludes, nil
+// }
+
+func getProjectMD5Includes(projectContextMap map[string]ParseContext) (map[string]string, error) {
+	rslt := make(map[string]string)
+	for _, ProjectContext := range projectContextMap {
+		for include := range ProjectContext.Includes {
+			md5, err := FileMD5(include)
+			if err != nil {
+				return rslt, fmt.Errorf("error calculating md5 of include: %w", err)
+			}
+			rslt[md5] = include
+		}
+	}
+	return rslt, nil
+}
+
+// func processMetaMissingIncludes(includedParseContext map[string]ParseContext) []string {
+// 	rslt := []string{}
+// 	for _, ParseContext := range includedParseContext {
+// 		for include, included := range ParseContext.MissingFiles {
+// 			fmt.Println(include)
+// 			rslt = append(rslt, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
+// 		}
+// 	}
+// 	return rslt
+// }
+
+// func processProjectMissingIncludes(includedProjectContext map[string]ParseContext, missingIncludes map[string]string, metaMap map[string]Meta) (map[string]string, error) {
+// 	rslt := make(map[string]string)
+// 	for upFile, ProjectContext := range includedProjectContext {
+// 		meta, _ := metaMap[upFile]
+// 		if meta.IsOriginal() {
+// 			continue
+// 		}
+// 		dir := filepath.Dir(upFile)
+
+// 		for include := range ProjectContext.MissingFiles {
+
+// 			includeDir, err := filepath.Rel(dir, include)
+// 			if err != nil {
+// 				return rslt, fmt.Errorf("error getting relative path: %w", err)
+// 			}
+// 			metaInclude := filepath.Join(meta.MetaInfo.Dir, includeDir)
+// 			if metaIncluded, exists := missingIncludes[metaInclude]; !exists {
+// 				rslt[metaInclude] = metaIncluded
+// 			}
+// 		}
+// 	}
+// 	return rslt, nil
+// }
+
+// func getMD5Map(includedParseContext map[string]ParseContext) (map[string]string, error) {
+// 	rslt := make(map[string]string)
+// 	for _, ParseContext := range includedParseContext {
+// 		for include, included := range ParseContext.Includes {
+// 			md5, err := FileMD5(include)
+// 			if err != nil {
+// 				return rslt, fmt.Errorf("error getting MD5 of an include file: %w", err)
+// 			}
+// 			rslt[md5] = include + ":" + included
+// 		}
+// 	}
+// 	return rslt, nil
+// }
+
+// func getMD5MapForFile(includedParseContext map[string]ParseContext) (map[string]map[string]string, error) {
+// 	rslt := make(map[string]map[string]string)
+// 	for upFile, ParseContext := range includedParseContext {
+// 		temp := make(map[string]string)
+// 		for include, included := range ParseContext.Includes {
+// 			md5, err := FileMD5(include)
+// 			if err != nil {
+// 				return rslt, fmt.Errorf("error getting MD5 of an include file: %w", err)
+// 			}
+// 			temp[md5] = include + ":" + included
+// 		}
+// 		rslt[upFile] = temp
+// 	}
+// 	return rslt, nil
+// }
+
+// func checkMissedIncludes(MD5MetaMap map[string]map[string]string, ProjectMD5Includes map[string]string) (map[string]string, error) {
+// 	rslt := make(map[string]string)
+// 	for file, md5IncludeMap := range MD5MetaMap {
+// 		parts := strings.Split(metaIncludeInfo, ":")
+// 		include := parts[0]
+// 		included := parts[1]
+// 		if _, exists := ProjectMD5Includes[md5]; !exists {
+// 			rslt[include] = included
+// 		}
+// 	}
+// 	return rslt, nil
+// }
+
+// func checkDeletedIncludes(MD5MetaMap map[string]string, ProjectIncludes map[string]ParseContext) (map[string]string, error) {
+// 	rslt := make(map[string]string)
+// 	for md5, metaIncludeInfo := range MD5MetaMap {
+// 		parts := strings.Split(metaIncludeInfo, ":")
+// 		metaInclude := parts[0]
+// 		metaIncluded := parts[1]
+
+// 		if projectInclude, exists := ProjectIncludes[metaIncluded]; !exists {
+// 			result
+// 		}
+// 	}
+// 	return rslt, nil
+// }
+
+func getMetaIncludes(metaMap map[string]Meta) (map[string]ParseContext, error) {
+	rslt := make(map[string]ParseContext)
+	for upFile, meta := range metaMap {
+		metaContext := NewParseContext()
+		isUp := strings.HasSuffix(upFile, ".up.sql")
+		if !isUp || meta.IsOriginal() {
+			continue
+		}
+		upPath := filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.UpFileName)
+		downPath := filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.DownFileName)
+		if err := ParseIncludes(metaContext, upPath, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing meta (up) for includes: %w, file: %s", err, upPath)
+		}
+		if err := ParseIncludes(metaContext, downPath, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing meta (down) for includes: %w, file: %s", err, downPath)
+		}
+		rslt[upFile] = *metaContext
+	}
+	return rslt, nil
+}
+
+// func getMigrationMD5Includes(projectContextMap map[string]ParseContext) (map[string]map[string]string, error) {
+// 	rslt := make(map[string]map[string]string)
+// 	for upFile, projectContext := range projectContextMap {
+// 		migrationMD5Includes := make(map[string]string)
+// 		for include := range projectContext.Includes {
+// 			md5, err := FileMD5(include)
+// 			if err != nil {
+// 				return rslt, fmt.Errorf("")
+// 			}
+// 			migrationMD5Includes[md5] = include
+// 		}
+// 		rslt[upFile] = migrationMD5Includes
+// 	}
+// 	return rslt, nil
+// }
+
+func getProjectIncludes(projectMap map[string]struct{}) (map[string]ParseContext, error) {
+	rslt := make(map[string]ParseContext)
+	for upFile := range projectMap {
+		projectContext := NewParseContext()
+		isUp := strings.HasSuffix(upFile, ".up.sql")
+		if !isUp {
+			continue
+		}
+		downFile := switchMigrationType(upFile, "down")
+		if err := ParseIncludes(projectContext, upFile, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing project (up) for includes: %w", err)
+		}
+		if err := ParseIncludes(projectContext, downFile, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing project (down) for includes: %w", err)
+		}
+		// if len(projectContext.MissingFiles) != 0 {
+		// 	fmt.Println(projectContext.MissingFiles)
+		// }
+		rslt[upFile] = *projectContext
+	}
+	return rslt, nil
+}
+
+func getModuleIncludes(moduleMap map[string]struct{}) (map[string]ParseContext, error) {
+	rslt := make(map[string]ParseContext)
+	for upFile := range moduleMap {
+		moduleContext := NewParseContext()
+		isUp := strings.HasSuffix(upFile, ".up.sql")
+		if !isUp {
+			continue
+		}
+		downFile := switchMigrationType(upFile, "down")
+		if err := ParseIncludes(moduleContext, upFile, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing module (up) for includes: %w", err)
+		}
+		if err := ParseIncludes(moduleContext, downFile, ""); err != nil {
+			return rslt, fmt.Errorf("error parsing module (down) for includes: %w", err)
+		}
+		rslt[upFile] = *moduleContext
+	}
+	return rslt, nil
+}
+
+func switchMigrationType(filename, newDirection string) string {
+	parts := strings.Split(filename, ".")
+	if len(parts) < 3 {
+		return filename
+	}
+	parts[len(parts)-2] = newDirection
+	return strings.Join(parts, ".")
+}
+
+func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
+	rslt := make(map[string]string)
+	for entryPath := range projectMap {
+		isUp := strings.HasSuffix(entryPath, ".up.sql")
+		if isUp {
+			entryName := filepath.Base(entryPath)
+			entryDir := filepath.Dir(entryPath)
+			downName := switchMigrationType(entryName, "down")
+			downPath := filepath.Join(entryDir, downName)
+			if _, exists := projectMap[downPath]; !exists {
+				rslt[downName] = entryName
+			}
+		} else {
+			entryName := filepath.Base(entryPath)
+			entryDir := filepath.Dir(entryPath)
+			upName := switchMigrationType(entryName, "up")
+			upPath := filepath.Join(entryDir, upName)
+			if _, exists := projectMap[upPath]; !exists {
+				rslt[upName] = entryName
+			}
+		}
+	}
+	return rslt, nil
+}
+
+// func checkModulePairs(ModuleMap map[string]struct{}) (map[string]string, error) {
+// 	rslt := make(map[string]string)
+// 	for entryPath := range ModuleMap {
+
+// 	}
+// 	return rslt, nil
+// }
+
+func getEntriesProjectMap(dir string) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("failed to read directory %s: %w", dir, err)
+		return nil, fmt.Errorf("error reading dir: %w", err)
 	}
-
-	fileMap := make(map[string]bool)
 	for _, entry := range entries {
-		fileMap[entry.Name()] = true
-	}
-
-	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		errOnce  sync.Once
-		firstErr error
-	)
-	sem := make(chan struct{}, concLimit)
-
-	setErr := func(err error) {
-		if err == nil {
-			return
+		match := SecondListPattern.MatchString(entry.Name())
+		if !match {
+			continue
 		}
-		errOnce.Do(func() {
-			firstErr = err
-		})
+		projectPath := filepath.Join(dir, entry.Name())
+		result[projectPath] = struct{}{}
 	}
+	return result, nil
+}
 
-	for _, entry := range entries {
-		entry := entry
-		wg.Add(1)
-		sem <- struct{}{}
-
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			Ld(fmt.Sprintf("found %s", entry.Name()))
-			// declaring maps for parseIncludes func
-			moduleContext := NewParseContext()
-			projectContext := NewParseContext()
-			migrationMD5Includes := make(map[string]string)
-
-			matches := ListPattern.FindStringSubmatch(entry.Name())
-			if len(matches) != 3 {
-				return
-			}
-
-			filePrefix, fileExt := matches[1], matches[2]
-			upFileName := entry.Name()
-			downFileName := fmt.Sprintf("%s.down.%s", filePrefix, fileExt)
-
-			fileDirUp := filepath.Join(dir, entry.Name())
-			fileDirDown := filepath.Join(dir, downFileName)
-
-			if _, exists := fileMap[downFileName]; !exists {
-				mu.Lock()
-				rslts.LostPairs[downFileName] = entry.Name()
-				mu.Unlock()
-				// because downFile is missing, only upFile is being parsed for includes
-				if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
-				// Lw(fmt.Sprintf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-				// setErr(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-				// return
-			} else {
-				if err := ParseIncludes(projectContext, fileDirUp, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
-				if err := ParseIncludes(projectContext, fileDirDown, ""); err != nil {
-					setErr(fmt.Errorf("ParseIncludes error: %w", err))
-					return
-				}
-			}
-
-			if len(projectContext.Errors) != 0 {
-				for _, e := range projectContext.Errors {
-					mu.Lock()
-					rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-					mu.Unlock()
-					// Lw(fmt.Sprintf("non-critical error: %s", e))
-				}
-			}
-
-			file, err := os.Open(fileDirUp)
-			if err != nil {
-				setErr(fmt.Errorf("error opening dir: %w", err))
-				return
-			}
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			foundMetaFlag := false
-			for scanner.Scan() {
-				line := scanner.Text()
-				// if meta is defined
-				if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
-					foundMetaFlag = true
-					meta = strings.TrimSpace(meta)
-
-					parts := strings.SplitN(meta, ";", 2)
-					if len(parts) == 0 {
-						continue
-					}
-					pathFileName := parts[0]
-					var metaMD5 string
-					if len(parts) == 2 {
-						metaMD5 = parts[1]
-					}
-					fileName := filepath.Base(pathFileName)
-					path := filepath.Dir(pathFileName)
-					// check for meta in the migration file
-					matches := ListPattern.FindStringSubmatch(fileName)
-					if matches == nil {
-						mu.Lock()
-						rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name()))
-						mu.Unlock()
-						continue
-						// setErr(fmt.Errorf("in file %s wrong meta #migration expect at name-x[.y[.z][-r].up.ext", file.Name()))
-						// return
-					}
-
-					metaExt := matches[2]
-					metaPrefix := matches[1]
-
-					metaDir := filepath.Join(filepath.Dir(dir), path)
-
-					metaUpName := metaPrefix + ".up." + metaExt
-					metaDownName := metaPrefix + ".down." + metaExt
-					metaFileDirUp := filepath.Join(metaDir, metaUpName)
-					metaFileDirDown := filepath.Join(metaDir, metaDownName)
-
-					if rslt, err := FindFileViaDir(metaFileDirDown); err != nil {
-						setErr(fmt.Errorf("findFileViaDir error: %w", err))
-						return
-					} else if !rslt {
-						if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
-							setErr(fmt.Errorf("findFileViaDir error: %w", err))
-							return
-						} else if !rslt {
-							// Lw(fmt.Sprintf("migration %s does not have based migration file %s", file.Name(), metaUpName))
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("migration %s does not have original pair of migration files %s.up|down.%s", file.Name(), metaPrefix, metaExt))
-							// pair of migrations is missing
-							rslts.DeletedFilesCnt += 2
-							rslts.DeletedFiles[fileDirUp] = metaFileDirUp
-							rslts.DeletedFiles[fileDirDown] = metaFileDirDown
-							mu.Unlock()
-							// continue
-						} else {
-							mu.Lock()
-							rslts.LostPairs[metaDownName] = metaUpName
-							// rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir))
-							mu.Unlock()
-							// setErr(fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaUpName, metaDownName, metaDir))
-							// return
-						}
-					} else {
-						if rslt, err = FindFileViaDir(metaFileDirUp); err != nil {
-							setErr(fmt.Errorf("findFileViaDir error: %w", err))
-							return
-						} else if !rslt {
-							mu.Lock()
-							rslts.LostPairs[metaUpName] = metaDownName
-							// rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir))
-							mu.Unlock()
-							// setErr(fmt.Errorf("BUG: file %s do not have counterpart file %s at '%s'", metaDownName, metaUpName, metaDir))
-							// return
-						}
-					}
-
-					Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
-						metaMD5,
-						metaPrefix,
-						metaExt,
-						metaDir,
-						metaUpName,
-						metaDownName),
-					)
-
-					mu.Lock()
-					rslts.ProjectMigrations[metaMD5] = Meta{
-						Prefix:       metaPrefix,
-						Ext:          metaExt,
-						Dir:          metaDir,
-						UpFileName:   metaUpName,
-						DownFileName: metaDownName,
-					}
-
-					rslts.ModuleMigrations[metaPrefix] = Meta{
-						Prefix:       filePrefix,
-						Ext:          fileExt,
-						Dir:          dir,
-						UpFileName:   upFileName,
-						DownFileName: downFileName,
-					}
-					mu.Unlock()
-
-					if err := ParseIncludes(moduleContext, metaFileDirDown, ""); err != nil {
-						setErr(fmt.Errorf("parseIncludes error: %w", err))
-						return
-					}
-					if err := ParseIncludes(moduleContext, metaFileDirUp, ""); err != nil {
-						setErr(fmt.Errorf("parseIncludes error: %w", err))
-						return
-					}
-					if len(moduleContext.Errors) != 0 {
-						for _, e := range moduleContext.Errors {
-							// Lw(fmt.Sprintf("non-critical error: %s", e))
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-							mu.Unlock()
-						}
-					}
-					for include, included := range moduleContext.MissingFiles {
-						// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
-						if included == "" {
-							continue
-						} else {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-							mu.Unlock()
-							// Le(fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-						}
-						// this is an error caused by developer, he should fix it by himself (or we can try to delete the @include line in the migration file of the module)
-					}
-					// project include is literally missing
-					for include, included := range projectContext.MissingFiles {
-						includeDir, err := filepath.Rel(filepath.Clean(dir), include)
-						if err != nil {
-							setErr(fmt.Errorf("error getting relative path: %w", err))
-							return
-						}
-						metaInclude := filepath.Join(metaDir, includeDir)
-						mu.Lock()
-						if _, exists := rslts.MissedIncludes[metaInclude]; !exists {
-							if metaIncluded, exists := rslts.ModuleIncludes[metaInclude]; exists {
-								rslts.MissedIncludes[metaInclude] = metaIncluded
-								rslts.MissedIncludesCnt++
-								rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("missed include: %s (included by %s)", include, included))
-								mu.Unlock()
-								// Lw(fmt.Sprintf("missed include: %s (included by %s)", include, included))
-							} else {
-								rslts.MissedIncludes[metaInclude] = "unknown"
-								rslts.MissedIncludesCnt++
-
-								rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include %s is missing, should be recreated using %s", include, metaInclude))
-								rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("can't find the file that included %s yet", metaInclude))
-								mu.Unlock()
-								// Lw(fmt.Sprintf("include %s is missing, should be recreated using %s", include, metaInclude))
-								// Lw(fmt.Sprintf("can't find the file that included %s yet", metaInclude))
-							}
-						} else {
-							mu.Unlock()
-						}
-					}
-
-					// build md5 includes from migrations includes
-					for include, included := range projectContext.Includes {
-						// fmt.Println(include, included)
-						md5Include, err := FileMD5(include)
-						if err != nil {
-							setErr(fmt.Errorf("FileMD5 error: %w", err))
-							return
-						}
-
-						migrationMD5Includes[md5Include] = include
-						mu.Lock()
-						rslts.ProjectMD5Includes[md5Include] = include
-						mu.Unlock()
-
-						Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in original includes at %s",
-							md5Include,
-							include,
-							included,
-							metaDir),
-						)
-
-						includeDir, err := filepath.Rel(filepath.Clean(dir), include)
-						if err != nil {
-							setErr(fmt.Errorf("error getting relative path: %w", err))
-							return
-						}
-						// fmt.Println(dir, include, includeDir)
-
-						// check if original include exists in module
-						metaInclude := filepath.Join(metaDir, includeDir)
-						if rslt, err := FindFileViaDir(metaInclude); err != nil {
-							setErr(fmt.Errorf("findFileViaDir error: %w", err))
-							return
-						} else if !rslt {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include %s may be deleted as %s is missing", include, metaInclude))
-							// Lw(fmt.Sprintf("include %s may be deleted as %s is deleted", include, metaInclude))
-							rslts.DeletedIncludes[include] = included
-							rslts.DeletedIncludesCnt++
-							mu.Unlock()
-						}
-
-					}
-					// compare includes and fill missed_includes or deleted includes
-					for include, included := range moduleContext.Includes {
-						md5Include, err := FileMD5(include)
-						if err != nil {
-							setErr(fmt.Errorf("FileMD5 error: %w", err))
-							return
-						}
-						Ld(fmt.Sprintf("md5 %s of include file %s included by %s and check in migrationIncludes", md5Include, include, included))
-						if _, exists := migrationMD5Includes[md5Include]; !exists {
-							mu.Lock()
-							if _, exists := rslts.MissedIncludes[include]; !exists {
-								rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("copy of include file %s is changed", include))
-								// Lw(fmt.Sprintf("copy of include file %s is changed", include))
-								rslts.MissedIncludesCnt++
-								rslts.MissedIncludes[include] = included
-							}
-							mu.Unlock()
-						} else {
-							mu.Lock()
-							rslts.ModuleIncludes[include] = included
-							mu.Unlock()
-						}
-					}
-
-				}
-			}
-			// lostPairFlag shows if project migration pair is complete (true - incomplete, false - complete)
-			mu.Lock()
-			existingPair, lostPairFlag := rslts.LostPairs[downFileName]
-			mu.Unlock()
-			// if meta is undefined, migration file is an original file
-			if !foundMetaFlag && !lostPairFlag {
-				ogFileMD5Up, err := FileMD5(fileDirUp)
-				if err != nil {
-					setErr(fmt.Errorf("FileMD5 error: %w", err))
-					return
-				}
-				ogFileMD5Down, err := FileMD5(fileDirDown)
-				if err != nil {
-					setErr(fmt.Errorf("FileMD5 error: %w", err))
-					return
-				}
-
-				ogFileMD5UpDown := ogFileMD5Up + ogFileMD5Down
-
-				mu.Lock()
-				rslts.ProjectMigrations[ogFileMD5UpDown] = Meta{
-					Prefix:       filePrefix,
-					Ext:          fileExt,
-					Dir:          dir,
-					UpFileName:   upFileName,
-					DownFileName: downFileName,
-				}
-				// fmt.Printf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s\n",
-				//  ogFileMD5UpDown,
-				//  filePrefix,
-				//  fileExt,
-				//  dir,
-				//  upFileName,
-				//  downFileName)
-
-				Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFileName: %s, DownFileName: %s",
-					ogFileMD5UpDown,
-					filePrefix,
-					fileExt,
-					dir,
-					upFileName,
-					downFileName),
-				)
-				// for include, included := range projectContext.Parent {
-				// 	fmt.Printf("include: %s, included by: %s\n", include, included)
-				// }
-				maps.Copy(rslts.ProjectIncludes, projectContext.Includes)
-				mu.Unlock()
-				// if missing migration pair is based on module migration pair then it can be fixed via collect command
-			} else if foundMetaFlag && lostPairFlag {
-				mu.Lock()
-				rslts.MissedPairs[downFileName] = existingPair
-				delete(rslts.LostPairs, downFileName)
-				mu.Unlock()
-			}
-			if err := scanner.Err(); err != nil {
-				setErr(fmt.Errorf("scanner error: %w", err))
-				return
-			}
-		}()
-	}
-
-	wg.Wait()
-	if firstErr != nil {
-		return firstErr
-	}
-
-	// list submodules migrations to find uncollected or changed files
-
-	rslts.MissedFilesCnt = 0
-	rslts.MissedFiles = make(map[string]Meta)
-
-	// getting submodule dir
-	moduleDirSlice, err := GetModuleDir(dir)
+func getEntriesModuleMap(dir string) (map[string]struct{}, error) {
+	rslt := make(map[string]struct{})
+	moduleDirs, err := GetModuleDir(dir)
 	if err != nil {
-		return fmt.Errorf("getModuleDir failed: %w", err)
+		return rslt, fmt.Errorf("error getting info on modules' path: %w", err)
 	}
-	MigrationDirName := filepath.Base(dir)
-	// for each git submodule
-	for _, moduleDir := range moduleDirSlice {
-		moduleProject := ""
-		moduleMigration := filepath.Join(moduleDir, MigrationDirName)
+	for _, moduleDir := range moduleDirs {
+		moduleMigration := filepath.Join(moduleDir, "migrations")
 		entries, err := os.ReadDir(moduleMigration)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
-			} else {
-				return fmt.Errorf("reading directory error: %w", err)
 			}
+			return rslt, fmt.Errorf("error reading directory: %w", err)
 		}
-		if filepath.Base(moduleDir) == "ddl" {
-			// I think I don't need to check ddl directory
-			continue
-		}
-		moduleProject, err = Describe(moduleDir, "project")
-		if err != nil {
-			return fmt.Errorf("describing module project failed: %w", err)
-		}
-		Ld(fmt.Sprintf("module project %s", moduleProject))
-
-		fileMap := make(map[string]bool, len(entries))
 		for _, entry := range entries {
-			fileMap[entry.Name()] = true
-		}
-		// for each file in submodule migrations directory
-		var (
-			wgSub       sync.WaitGroup
-			errOnceSub  sync.Once
-			firstErrSub error
-		)
-		semSub := make(chan struct{}, concLimit)
-
-		setErrSub := func(err error) {
-			if err == nil {
-				return
+			match := SecondListPattern.MatchString(entry.Name())
+			if !match {
+				continue
 			}
-			errOnceSub.Do(func() {
-				firstErrSub = err
-			})
-		}
-
-		for _, entry := range entries {
-			entry := entry
-			wgSub.Add(1)
-			semSub <- struct{}{}
-
-			go func() {
-				defer wgSub.Done()
-				defer func() { <-semSub }()
-
-				Ld(fmt.Sprintf("file name %s dir %s", entry.Name(), moduleMigration))
-				matches := ListPattern.FindStringSubmatch(entry.Name())
-				if len(matches) != 3 {
-					return
-				}
-
-				modulePrefix, moduleExt := matches[1], matches[2]
-
-				// seems like obsolete check
-				// (!)
-				if !strings.HasPrefix(entry.Name(), moduleProject) {
-					Ld(fmt.Sprintf("file not started with project name: %s", moduleProject))
-					modulePrefix = strings.TrimSuffix(entry.Name(), ".up.sql")
-				}
-
-				upFileName := fmt.Sprintf("%s.up.%s", modulePrefix, moduleExt)
-				downFileName := fmt.Sprintf("%s.down.%s", modulePrefix, moduleExt)
-
-				fileDirUp := filepath.Join(moduleMigration, upFileName)
-				fileDirDown := filepath.Join(moduleMigration, downFileName)
-
-				if _, exists := fileMap[downFileName]; !exists {
-					mu.Lock()
-					rslts.LostPairs[downFileName] = entry.Name()
-					// rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-					mu.Unlock()
-					return
-					// setErrSub(fmt.Errorf("file %s do not have counterpart file %s at '%s'", entry.Name(), downFileName, dir))
-					// return
-				}
-
-				md5ModuleUp, err := FileMD5(fileDirUp)
-				if err != nil {
-					setErrSub(fmt.Errorf("FileMD5 error: %w", err))
-					return
-				}
-				md5ModuleDown, err := FileMD5(fileDirDown)
-				if err != nil {
-					setErrSub(fmt.Errorf("FileMD5 error: %w", err))
-					return
-				}
-
-				md5ModuleUpDown := md5ModuleUp + md5ModuleDown
-
-				Ld(fmt.Sprintf("MD5: %s, Prefix: %s, Ext: %s, Dir: %s, UpFile: %s, DownFile: %s",
-					md5ModuleUpDown,
-					modulePrefix,
-					moduleExt,
-					moduleMigration,
-					upFileName,
-					downFileName),
-				)
-
-				if _, exists := rslts.ProjectMigrations[md5ModuleUpDown]; !exists {
-					mu.Lock()
-					rslts.MissedFiles[upFileName] = Meta{
-						Prefix:       modulePrefix,
-						Ext:          moduleExt,
-						Dir:          moduleMigration,
-						UpFileName:   upFileName,
-						DownFileName: downFileName,
-					}
-					// missed pair of migrations
-					rslts.MissedFilesCnt += 2
-					mu.Unlock()
-
-					// checking includes in the missed module pair
-					missedModuleContext := NewParseContext()
-
-					if err := ParseIncludes(missedModuleContext, fileDirUp, ""); err != nil {
-						setErrSub(fmt.Errorf("error ParseIncludes: %w", err))
-						return
-					}
-					if err := ParseIncludes(missedModuleContext, fileDirDown, ""); err != nil {
-						setErrSub(fmt.Errorf("error ParseIncludes: %w", err))
-						return
-					}
-					if len(missedModuleContext.Errors) != 0 {
-						for _, e := range missedModuleContext.Errors {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("parse includes non-critical error: %s", e))
-							mu.Unlock()
-						}
-					}
-					for include, included := range missedModuleContext.MissingFiles {
-						// this commend sounds to be bs but let it be, i made this '== ""' exception for a reason
-						// if module file is gone but it is still being referenced by project file. it causes Le with empty included field, so it just skips
-						if included == "" {
-							continue
-						} else {
-							mu.Lock()
-							rslts.ListWarnings = append(rslts.ListWarnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
-							mu.Unlock()
-						}
-					}
-					for include, included := range missedModuleContext.Includes {
-						Ld(fmt.Sprintf("include file %s", include))
-
-						md5, err := FileMD5(include)
-						if err != nil {
-							setErrSub(fmt.Errorf("error FileMD5: %w", err))
-							return
-						}
-						Ld(fmt.Sprintf("md5 %s of include %s included by %s and check in migrationIncludes", md5, include, included))
-						mu.Lock()
-						if _, exists := rslts.ProjectMD5Includes[md5]; !exists {
-							if _, exists := rslts.MissedIncludes[include]; !exists {
-								Ld(fmt.Sprintf("include file %s is changed or doesn't exist in migration includes", include))
-								rslts.MissedIncludes[include] = included
-								rslts.MissedIncludesCnt++
-							}
-						}
-						mu.Unlock()
-					}
-				}
-			}()
-		}
-
-		wgSub.Wait()
-		if firstErrSub != nil {
-			return firstErrSub
+			modulePath := filepath.Join(moduleMigration, entry.Name())
+			rslt[modulePath] = struct{}{}
 		}
 	}
 
-	// for include, included := range rslts.ModuleIncludes {
-	// 	fmt.Println(include, included)
-	// }
-	return nil
+	return rslt, nil
+}
+
+func checkMissedFiles(projectMigrations map[string]MigrationInfo, moduleMap map[string]MigrationInfo) map[string]MigrationInfo {
+	missedFilesMap := make(map[string]MigrationInfo)
+	for md5, moduleInfo := range moduleMap {
+		if _, exists := projectMigrations[md5]; !exists {
+			missedFilesMap[moduleInfo.UpFileName] = moduleInfo
+			missedFilesMap[moduleInfo.DownFileName] = moduleInfo
+		}
+	}
+	return missedFilesMap
+}
+
+func checkDeletedFiles(metaMap map[string]Meta, moduleMap map[string]struct{}) (map[string]string, error) {
+	deletedFilesMap := make(map[string]string)
+	for projectPath, meta := range metaMap {
+		matches := ListPattern.FindStringSubmatch(filepath.Base(projectPath))
+		if matches == nil {
+			continue
+		}
+		if meta.IsOriginal() {
+			continue
+		}
+		dir := filepath.Dir(projectPath)
+		prefix, ext := matches[1], matches[2]
+		upProjectPath := filepath.Join(dir, prefix+".up."+ext)
+		downProjectPath := filepath.Join(dir, prefix+".down."+ext)
+
+		upPath := filepath.Join(meta.MetaInfo.Dir, fmt.Sprintf("%s.up.%s", meta.MetaInfo.Prefix, meta.MetaInfo.Ext))
+		downPath := filepath.Join(meta.MetaInfo.Dir, fmt.Sprintf("%s.down.%s", meta.MetaInfo.Prefix, meta.MetaInfo.Ext))
+
+		_, upExists := moduleMap[upPath]
+		_, downExists := moduleMap[downPath]
+		if !upExists && !downExists {
+			deletedFilesMap[upProjectPath] = upPath
+			deletedFilesMap[downProjectPath] = downPath
+		} else {
+			continue
+		}
+	}
+	return deletedFilesMap, nil
+}
+
+func GetModuleMap(moduleMap map[string]struct{}) (map[string]MigrationInfo, error) {
+	rslt := make(map[string]MigrationInfo)
+	for entry := range moduleMap {
+		// moduleDir := filepath.Dir(entry)
+		// moduleName := filepath.Base(entry)
+		moduleInfo, md5, err := GetModule(entry)
+		if err != nil {
+			return rslt, fmt.Errorf("error getting module info: %w", err)
+		}
+		// empty md5 means that pair of migrations is incomplete
+		if md5 == "" {
+			continue
+		}
+		rslt[md5] = moduleInfo
+	}
+	return rslt, nil
+}
+
+func GetModule(entry string) (MigrationInfo, string, error) {
+	dir := filepath.Dir(entry)
+	entryName := filepath.Base(entry)
+	matches := SecondListPattern.FindStringSubmatch(entryName)
+	if matches == nil {
+		return MigrationInfo{}, "", fmt.Errorf("wrong name of module migration %s", entryName)
+	}
+
+	prefix, ext := matches[1], matches[3]
+
+	upName := prefix + ".up." + ext
+	downName := prefix + ".down." + ext
+	upPath := filepath.Join(dir, upName)
+	downPath := filepath.Join(dir, downName)
+
+	md5, err := ConcatMD5(upPath, downPath)
+	if err != nil {
+		return MigrationInfo{}, "", fmt.Errorf("error getting concat of MD5: %w", err)
+	}
+	return MigrationInfo{
+		Prefix:       prefix,
+		Ext:          ext,
+		Dir:          dir,
+		UpFileName:   upName,
+		DownFileName: downName,
+	}, md5, nil
+}
+
+func ConcatMD5(upPath, downPath string) (string, error) {
+	md5Up, err := FileMD5(upPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("FileMD5 error: %w", err)
+	}
+	md5Down, err := FileMD5(downPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("FileMD5 error: %w", err)
+	}
+
+	return md5Up + md5Down, nil
+}
+
+func (m Meta) IsOriginal() bool {
+	return m.MD5 == ""
+}
+
+func GetMetaMap(projectMap map[string]struct{}) (map[string]Meta, error) {
+	result := make(map[string]Meta)
+	for projectPath := range projectMap {
+		metaEntry, md5, err := getMetaInfo(projectPath)
+		if err != nil {
+			return nil, fmt.Errorf("error getting project: %w", err)
+		}
+		result[projectPath] = Meta{
+			MetaInfo: metaEntry,
+			MD5:      md5,
+		}
+	}
+	return result, nil
+}
+
+func getMetaInfo(projectPath string) (MigrationInfo, string, error) {
+	var (
+		prefix   string
+		ext      string
+		path     string
+		metaMD5  string
+		upName   string
+		downName string
+	)
+
+	projectDir := filepath.Dir(projectPath)
+	file, err := os.Open(projectPath)
+	if err != nil {
+		return MigrationInfo{}, "", fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		// if meta is defined
+		if meta, ok := strings.CutPrefix(line, "#migration:"); ok {
+			meta = strings.TrimSpace(meta)
+			parts := strings.SplitN(meta, ";", 2)
+			if len(parts) != 2 {
+				return MigrationInfo{}, "", fmt.Errorf("wrong meta field: %s", meta)
+			}
+			relPathFileName := parts[0]
+			metaMD5 = parts[1]
+
+			fileName := filepath.Base(relPathFileName)
+			path = filepath.Join(filepath.Dir(projectDir), filepath.Dir(relPathFileName))
+			// check for meta in the migration file
+			matches := SecondListPattern.FindStringSubmatch(fileName)
+			if matches == nil {
+				return MigrationInfo{}, "", fmt.Errorf("wrong migration name: %s", fileName)
+			}
+			prefix = matches[1]
+			ext = matches[3]
+			upName = prefix + ".up." + ext
+			downName = prefix + ".down." + ext
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return MigrationInfo{}, "", fmt.Errorf("scanner error: %w", err)
+	}
+	return MigrationInfo{
+		Prefix:       prefix,
+		Ext:          ext,
+		Dir:          path,
+		UpFileName:   upName,
+		DownFileName: downName,
+	}, metaMD5, nil
 }
 
 func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
@@ -701,6 +904,10 @@ func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 	file, err := os.Open(fileDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// current = "nil" if fileDir is not an include
+			if current == "" {
+				return nil
+			}
 			delete(ctx.Includes, fileDir)
 			ctx.MissingFiles[fileDir] = current
 			return nil

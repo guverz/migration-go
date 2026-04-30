@@ -22,25 +22,24 @@ var collectCmd = &cobra.Command{
 }
 
 func collect() error {
-	rslts := &migration.ListResults{}
 	collectedCnt := 0
 	var listError error
-	err := migration.MigrationList(migration.MigrationDir, rslts)
+	rslts, err := migration.MigrationList(migration.MigrationDir)
 	if err != nil {
 		listError = fmt.Errorf("migrationList failed: %w", err)
 		// return fmt.Errorf("migrationList failed: %w", err)
 	}
 
-	if rslts.MissedFilesCnt != 0 {
-		migration.Ld(fmt.Sprintf("there are unregistered migration files pairs (%d), collecting:\n", rslts.MissedFilesCnt))
+	if len(rslts.MissedFiles) != 0 {
+		migration.Ld(fmt.Sprintf("there are unregistered migration files pairs (%d), collecting:\n", len(rslts.MissedFiles)))
 		collected, err := migration.MissedFiles(rslts)
 		if err != nil {
 			return err
 		}
 		collectedCnt += collected
 	}
-	if rslts.MissedIncludesCnt != 0 {
-		migration.Ld(fmt.Sprintf("the number of missed includes is (%d)\n", rslts.MissedIncludesCnt))
+	if len(rslts.MissedIncludes) != 0 {
+		migration.Ld(fmt.Sprintf("the number of missed includes is (%d)\n", len(rslts.MissedIncludes)))
 		collected, err := migration.MissedIncludes(rslts)
 		if err != nil {
 			return err
@@ -55,8 +54,8 @@ func collect() error {
 		}
 		collectedCnt += collected
 	}
-	if rslts.DeletedIncludesCnt != 0 {
-		migration.Ld(fmt.Sprintf("the number of deleted includes is %d", rslts.DeletedIncludesCnt))
+	if len(rslts.DeletedIncludes) != 0 {
+		migration.Ld(fmt.Sprintf("the number of deleted includes is %d", len(rslts.DeletedIncludes)))
 		collected, err := migration.DeletedIncludes(rslts)
 		if err != nil {
 			return err
