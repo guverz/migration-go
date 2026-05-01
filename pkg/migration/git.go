@@ -3,22 +3,27 @@ package migration
 import (
 	"bufio"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
 	versiongo "github.com/AlexBurnes/version-go/pkg/version"
 )
 
-func GetModuleDir(path string) ([]string, error) {
+func GetModuleDir(fsys fs.FS, path string) ([]string, error) {
 	rslt := []string{}
 	outerDir := filepath.Dir(path)
 	submoduleDir := filepath.Join(outerDir, ".gitmodules")
-	f, err := os.Open(submoduleDir)
+	submoduleDir = filepath.ToSlash(submoduleDir)
+	f, err := fsys.Open(submoduleDir)
 	if err != nil {
 		return nil, fmt.Errorf("error opening .gitmodules: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 

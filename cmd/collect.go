@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/guverz/migration-go/pkg/migration"
 
@@ -24,7 +25,9 @@ var collectCmd = &cobra.Command{
 func collect() error {
 	collectedCnt := 0
 	var listError error
-	rslts, err := migration.MigrationList(migration.MigrationDir)
+	fsys := os.DirFS(".")
+
+	rslts, err := migration.MigrationList(fsys, migration.MigrationDir)
 	if err != nil {
 		listError = fmt.Errorf("migrationList failed: %w", err)
 		// return fmt.Errorf("migrationList failed: %w", err)
@@ -32,7 +35,7 @@ func collect() error {
 
 	if len(rslts.MissedFiles) != 0 {
 		migration.Ld(fmt.Sprintf("there are unregistered migration files pairs (%d), collecting:\n", len(rslts.MissedFiles)))
-		collected, err := migration.MissedFiles(rslts)
+		collected, err := migration.MissedFiles(rslts.MissedFiles, rslts.ModuleMigrations)
 		if err != nil {
 			return err
 		}
@@ -40,7 +43,7 @@ func collect() error {
 	}
 	if len(rslts.MissedIncludes) != 0 {
 		migration.Ld(fmt.Sprintf("the number of missed includes is (%d)\n", len(rslts.MissedIncludes)))
-		collected, err := migration.MissedIncludes(rslts)
+		collected, err := migration.MissedIncludes(rslts.MissedIncludes, rslts.ProjectIncludes)
 		if err != nil {
 			return err
 		}
@@ -48,7 +51,7 @@ func collect() error {
 	}
 	if len(rslts.MissedPairs) != 0 {
 		migration.Ld(fmt.Sprintf("the number of deleted files is %d", len(rslts.DeletedFiles)))
-		collected, err := migration.MissedPairs(rslts)
+		collected, err := migration.MissedPairs(rslts.MissedPairs, rslts.ModuleMigrations, rslts.ProjectMigrations)
 		if err != nil {
 			return err
 		}
@@ -56,7 +59,7 @@ func collect() error {
 	}
 	if len(rslts.DeletedIncludes) != 0 {
 		migration.Ld(fmt.Sprintf("the number of deleted includes is %d", len(rslts.DeletedIncludes)))
-		collected, err := migration.DeletedIncludes(rslts)
+		collected, err := migration.DeletedIncludes(rslts.DeletedIncludes, rslts.ProjectIncludes, rslts.ModuleIncludes)
 		if err != nil {
 			return err
 		}
@@ -64,7 +67,7 @@ func collect() error {
 	}
 	if len(rslts.DeletedFiles) != 0 {
 		migration.Ld(fmt.Sprintf("the number of  deleted files is %d", len(rslts.DeletedFiles)))
-		collected, err := migration.DeletedFiles(rslts)
+		collected, err := migration.DeletedFiles(rslts.DeletedFiles)
 		if err != nil {
 			return err
 		}

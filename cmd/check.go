@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/guverz/migration-go/pkg/migration"
 
@@ -23,8 +24,9 @@ var checkCmd = &cobra.Command{
 
 func check() error {
 	collect := false
+	fsys := os.DirFS(".")
 
-	rslt, err := migration.MigrationList(migration.MigrationDir)
+	rslt, err := migration.MigrationList(fsys, migration.MigrationDir)
 	if err != nil {
 		return fmt.Errorf("migrationList failed: %w", err)
 	}
@@ -57,7 +59,7 @@ func check() error {
 		migration.Lw(fmt.Sprintf("there is number of incomplete pairs (%d), collect them and commit:", len(rslt.MissedPairs)))
 		collect = true
 		for missed, existing := range rslt.MissedPairs {
-			fmt.Printf("file %s do not have counterpart %s\n", existing, missed)
+			fmt.Printf("\tfile %s do not have counterpart %s\n", existing, missed)
 		}
 	}
 	if len(rslt.DeletedIncludes) != 0 {

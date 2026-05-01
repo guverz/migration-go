@@ -26,7 +26,9 @@ func testChdirRepo(t *testing.T, repoRoot string) {
 		t.Fatalf("chdir repo: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.Chdir(oldWD)
+		if err := os.Chdir(oldWD); err != nil {
+			t.Fatalf("chdir error: %v", err)
+		}
 	})
 }
 
@@ -52,19 +54,29 @@ func TestParseIncludes(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("error removing temp directory: %v", err)
+					}
 				})
 				includeDirPath := filepath.Join(tmpDir, "includes")
-				os.Mkdir(includeDirPath, 0755)
+				if err := os.Mkdir(includeDirPath, 0755); err != nil {
+					t.Fatalf("error creating dir: %v", err)
+				}
 				includedFilePath := filepath.Join(tmpDir, "included.txt")
 				baseIncludeName := "include"
-				os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644)
+				if err := os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
 				for i := 0; i < 5; i++ {
 					includePath := filepath.Join(includeDirPath, fmt.Sprintf("%s_%v.txt", baseIncludeName, i))
 					if i != 4 {
-						os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644)
+						if err := os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					} else {
-						os.WriteFile(includePath, []byte(""), 0644)
+						if err := os.WriteFile(includePath, []byte(""), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					}
 				}
 				return includedFilePath
@@ -81,19 +93,29 @@ func TestParseIncludes(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("error removing temp directory: %v", err)
+					}
 				})
 				includeDirPath := filepath.Join(tmpDir, "includes")
-				os.Mkdir(includeDirPath, 0755)
+				if err := os.Mkdir(includeDirPath, 0755); err != nil {
+					t.Fatalf("error creating dir: %v", err)
+				}
 				includedFilePath := filepath.Join(tmpDir, "included.txt")
 				baseIncludeName := "include"
-				os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644)
+				if err := os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
 				for i := 1; i < 6; i++ {
 					includePath := filepath.Join(includeDirPath, fmt.Sprintf("%s_%v.txt", baseIncludeName, i))
 					if i != 4 {
-						os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644)
+						if err := os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					} else {
-						os.WriteFile(includePath, []byte(""), 0644)
+						if err := os.WriteFile(includePath, []byte(""), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					}
 				}
 				return includedFilePath
@@ -110,19 +132,29 @@ func TestParseIncludes(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("error removing temp directory: %v", err)
+					}
 				})
 				includeDirPath := filepath.Join(tmpDir, "includes")
-				os.Mkdir(includeDirPath, 0755)
+				if err := os.Mkdir(includeDirPath, 0755); err != nil {
+					t.Fatalf("error creating dir: %v", err)
+				}
 				includedFilePath := filepath.Join(tmpDir, "included.txt")
 				baseIncludeName := "include"
-				os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644)
+				if err := os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
 				for i := 0; i < 5; i++ {
 					includePath := filepath.Join(includeDirPath, fmt.Sprintf("%s_%v.txt", baseIncludeName, i))
 					if i != 4 {
-						os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644)
+						if err := os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					} else {
-						os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i-2)), 0644)
+						if err := os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i-2)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 					}
 				}
 				return includedFilePath
@@ -553,8 +585,9 @@ func TestMigrationList(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			migrationRelDir := tt.setup(t)
+			fsys := os.DirFS(".")
 
-			rslts, err := MigrationList(migrationRelDir)
+			rslts, err := MigrationList(fsys, migrationRelDir)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MigrationList() error = %v, wantErr %v", err, tt.wantErr)
 				return

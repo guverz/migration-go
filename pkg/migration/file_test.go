@@ -1,9 +1,12 @@
 package migration
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestFindFileViaDir(t *testing.T) {
@@ -185,6 +188,120 @@ func TestStripDir(t *testing.T) {
 
 			if result != tt.wantResult {
 				t.Errorf("StripDir() result = %v, want %v", result, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestGetEntriesProjectMap(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(t *testing.T) (string, fs.FS)
+		wantEntryLen int
+		wantErr      bool
+	}{
+		{
+			name: "normal",
+			setup: func(t *testing.T) (string, fs.FS) {
+				projectDir, err := os.MkdirTemp("", "test_parse_includes_*")
+				if err != nil {
+					t.Fatalf("failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(projectDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				testChdirRepo(t, projectDir)
+				fsys := os.DirFS(".")
+				migrationDir := filepath.Join(projectDir, "migrations")
+				if err := os.Mkdir(migrationDir, 0755); err != nil {
+					t.Fatalf("failed to create migration directory: %v", err)
+				}
+				baseProjectName := "test-project-0.1.0"
+				for i := 1; i < 5; i++ {
+					for j := 1; j < 4; j++ {
+						projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
+						projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
+						projectUpPath := filepath.Join(migrationDir, projectUpName)
+						projectDownPath := filepath.Join(migrationDir, projectDownName)
+						if err := os.WriteFile(projectUpPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+						if err := os.WriteFile(projectDownPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+					}
+				}
+				return "migrations", fsys
+			},
+			wantEntryLen: 24,
+			wantErr:      false,
+		},
+		{
+			name: "wrong format",
+			setup: func(t *testing.T) (string, fs.FS) {
+				projectDir, err := os.MkdirTemp("", "test_parse_includes_*")
+				if err != nil {
+					t.Fatalf("failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(projectDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				testChdirRepo(t, projectDir)
+				fsys := os.DirFS(".")
+				migrationDir := filepath.Join(projectDir, "migrations")
+				if err := os.Mkdir(migrationDir, 0755); err != nil {
+					t.Fatalf("failed to create migration directory: %v", err)
+				}
+				baseProjectName := "test-project-0.1.0"
+				for i := 1; i < 5; i++ {
+					for j := 1; j < 4; j++ {
+						projectUpName := fmt.Sprintf("%s-%v-%v.left.sql", baseProjectName, i, j)
+						projectDownName := fmt.Sprintf("%s-%v-%v.right.sql", baseProjectName, i, j)
+						projectUpPath := filepath.Join(migrationDir, projectUpName)
+						projectDownPath := filepath.Join(migrationDir, projectDownName)
+						if err := os.WriteFile(projectUpPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+						if err := os.WriteFile(projectDownPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+					}
+				}
+				return "migrations", fsys
+			},
+			wantEntryLen: 0,
+			wantErr:      false,
+		},
+		{
+			name: "fsys check",
+			setup: func(t *testing.T) (string, fs.FS) {
+				fsys := fstest.MapFS{
+					"proj1.txt":  {Data: []byte{}},
+					"proj2.txt":  {Data: []byte{}},
+					"ignore.log": {Data: []byte{}},
+				}
+
+				return ".", fsys
+			},
+			wantEntryLen: 0,
+			wantErr:      false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, fsys := tt.setup(t)
+			changedDir := filepath.ToSlash(dir)
+			resultMap, err := getEntriesProjectMap(fsys, changedDir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getEntriesProjectMap() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(resultMap) != tt.wantEntryLen {
+				t.Errorf("getEntriesProjectMap() found = %v, want %v", len(resultMap), tt.wantEntryLen)
 			}
 		})
 	}

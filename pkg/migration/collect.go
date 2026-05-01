@@ -5,40 +5,35 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
-var (
-	ValidationPattern = regexp.MustCompile(`^(.+)\.(up|down)\.sql$`)
-)
-
-func MissedFiles(rslts *ListResults) (int, error) {
+func MissedFiles(missedFiles map[string]MigrationInfo, moduleMigrations map[string]MigrationInfo) (int, error) {
 	collectedCnt := 0
 
-	targetDirUp := ""
-	targetDirDown := ""
-	for _, module := range rslts.MissedFiles {
+	targetUpPath := ""
+	targetDownPath := ""
+	for _, module := range missedFiles {
 		fmt.Printf("%s.up|down.%s\n", module.Prefix, module.Ext)
-		upFileDir := filepath.Join(module.Dir, module.UpFileName)
-		downFileDir := filepath.Join(module.Dir, module.DownFileName)
-		if rslt, err := FindFileViaDir(upFileDir); err != nil {
+		upPath := filepath.Join(module.Dir, module.UpFileName)
+		downPath := filepath.Join(module.Dir, module.DownFileName)
+		if rslt, err := FindFileViaDir(upPath); err != nil {
 			return collectedCnt, fmt.Errorf("error FindFileViaDir: %w", err)
 		} else if !rslt {
 			// Lw(fmt.Sprintf("BUG: there is no file %s, something is wrong", upFileDir))
 			// continue
-			return collectedCnt, fmt.Errorf("BUG: there is no file %s, something is wrong", upFileDir)
+			return collectedCnt, fmt.Errorf("BUG: there is no file %s, something is wrong", upPath)
 		}
-		if rslt, err := FindFileViaDir(downFileDir); err != nil {
+		if rslt, err := FindFileViaDir(downPath); err != nil {
 			return collectedCnt, fmt.Errorf("error FindFileViaDir: %w", err)
 		} else if !rslt {
 			// Lw(fmt.Sprintf("BUG: there is no file %s, something is wrong", downFileDir))
 			// continue
-			return collectedCnt, fmt.Errorf("BUG: there is no file %s, something is wrong", downFileDir)
+			return collectedCnt, fmt.Errorf("BUG: there is no file %s, something is wrong", downPath)
 		}
 		// before check if prefix exists in moduleMigrations == check if missing files are being present in project as copies
 		// ngl this thing is probably impossible as we get rslts.MissedFiles only if module migration pair is not present in project
-		if project, exists := rslts.ModuleMigrations[module.Prefix]; exists {
+		if project, exists := moduleMigrations[module.Prefix]; exists {
 			// if only the update of the migration file is required
 			migrationUpFileDir := filepath.Join(project.Dir, project.UpFileName)
 			migrationDownFileDir := filepath.Join(project.Dir, project.DownFileName)
@@ -66,8 +61,8 @@ func MissedFiles(rslts *ListResults) (int, error) {
 				return collectedCnt, fmt.Errorf("error zeroing file: %w", err)
 			}
 
-			targetDirUp = migrationUpFileDir
-			targetDirDown = migrationDownFileDir
+			targetUpPath = migrationUpFileDir
+			targetDownPath = migrationDownFileDir
 
 			Lw(fmt.Sprintf("pair %s.up|down.%s update migration %s.up|down.%s", module.Prefix, module.Ext, project.Prefix, project.Ext))
 		} else {
@@ -83,8 +78,8 @@ func MissedFiles(rslts *ListResults) (int, error) {
 			newUpFileDir := filepath.Join(MigrationDir, newUpFileName)
 			newDownFileDir := filepath.Join(MigrationDir, newDownFileName)
 
-			targetDirUp = newUpFileDir
-			targetDirDown = newDownFileDir
+			targetUpPath = newUpFileDir
+			targetDownPath = newDownFileDir
 
 			if rslt, err := FindFileViaDir(newUpFileDir); err != nil {
 				return collectedCnt, fmt.Errorf("error FindFileViaDir: %w", err)
@@ -103,19 +98,19 @@ func MissedFiles(rslts *ListResults) (int, error) {
 			fmt.Printf("pair %s.up|down.%s updating migration pair: %s.up|down.sql\n", module.Prefix, module.Ext, migrationTemplate)
 		}
 
-		md5Up, err := FileMD5(upFileDir)
+		md5Up, err := FileMD5(upPath)
 		if err != nil {
 			return collectedCnt, fmt.Errorf("error FileMD5: %w", err)
 		}
-		md5Down, err := FileMD5(downFileDir)
+		md5Down, err := FileMD5(downPath)
 		if err != nil {
 			return collectedCnt, fmt.Errorf("error FileMD5: %w", err)
 		}
 
 		md5UpDown := md5Up + md5Down
 
-		relativeUpFile := StripDir(upFileDir)
-		relativeDownFile := StripDir(downFileDir)
+		relativeUpFile := StripDir(upPath)
+		relativeDownFile := StripDir(downPath)
 
 		// fmt.Printf("writing into file %s information %s\n", newUpFileDir, fmt.Sprintf("#migration: %s;%s",
 		// 	relativeUpFile,
@@ -123,8 +118,8 @@ func MissedFiles(rslts *ListResults) (int, error) {
 		// )
 
 		if err := appendToFrom(
-			targetDirUp,
-			upFileDir,
+			targetUpPath,
+			upPath,
 			fmt.Sprintf("#migration: %s;%s\n", relativeUpFile, md5UpDown),
 		); err != nil {
 			return collectedCnt, fmt.Errorf("error writing into new migration file: %w", err)
@@ -137,8 +132,8 @@ func MissedFiles(rslts *ListResults) (int, error) {
 		// )
 
 		if err := appendToFrom(
-			targetDirDown,
-			downFileDir,
+			targetDownPath,
+			downPath,
 			fmt.Sprintf("#migration: %s;%s\n", relativeDownFile, md5UpDown),
 		); err != nil {
 			return collectedCnt, fmt.Errorf("error writing into new migration file: %w", err)
@@ -153,12 +148,12 @@ func MissedFiles(rslts *ListResults) (int, error) {
 	return collectedCnt, nil
 }
 
-func MissedIncludes(rslts *ListResults) (int, error) {
+func MissedIncludes(missedIncludes map[string]string, projectIncludes map[string]string) (int, error) {
 	collectedCnt := 0
 	// for include, included := range rslts.MissedIncludes {
 	// 	fmt.Printf("include %s included by %s", include, included)
 	// }
-	for include, included := range rslts.MissedIncludes {
+	for include, included := range missedIncludes {
 		Ld(fmt.Sprintf("include file %s", include))
 		if exists, err := FindFileViaDir(include); err != nil {
 			return collectedCnt, fmt.Errorf("error FindFileViaDir: %w", err)
@@ -187,7 +182,7 @@ func MissedIncludes(rslts *ListResults) (int, error) {
 				}
 			}
 			// ngl this part seems to be inaccessible
-			if _, exists := rslts.ProjectIncludes[newIncludeFile]; exists {
+			if _, exists := projectIncludes[newIncludeFile]; exists {
 				projectMD5, err := FileMD5(newIncludeFile)
 				if err != nil {
 					return collectedCnt, fmt.Errorf("error FileMD5: %w", err)
@@ -228,13 +223,13 @@ func MissedIncludes(rslts *ListResults) (int, error) {
 	return collectedCnt, nil
 }
 
-func DeletedIncludes(rslts *ListResults) (int, error) {
+func DeletedIncludes(deletedIncludes map[string]string, projectIncludes map[string]string, moduleIncludes map[string]string) (int, error) {
 	collectedCnt := 0
-	for include, included := range rslts.DeletedIncludes {
+	for include, included := range deletedIncludes {
 		fmt.Printf("include file %s included by %s\n", include, included)
-		// check if file exists in rslts.ProjectIncludes, if included by something else, then do not delete
-		_, exists1 := rslts.ProjectIncludes[include]
-		_, exists2 := rslts.ModuleIncludes[include]
+		// check if file exists in ProjectIncludes, if included by something else, then do not delete
+		_, exists1 := projectIncludes[include]
+		_, exists2 := moduleIncludes[include]
 		if !exists1 && !exists2 {
 			// WARNING: dangerous operation, check before delete
 			if fileInfo, err := os.Stat(include); err == nil && fileInfo.Mode().IsRegular() {
@@ -249,9 +244,9 @@ func DeletedIncludes(rslts *ListResults) (int, error) {
 	return collectedCnt, nil
 }
 
-func DeletedFiles(rslts *ListResults) (int, error) {
+func DeletedFiles(deletedFiles map[string]string) (int, error) {
 	collectedCnt := 0
-	for project := range rslts.DeletedFiles {
+	for project := range deletedFiles {
 		// WARNING dangerous operation, check if migration file is a regular file
 		if fileInfo, err := os.Stat(project); err == nil && fileInfo.Mode().IsRegular() {
 			Lw(fmt.Sprintf("deleting %s", project))
@@ -265,27 +260,29 @@ func DeletedFiles(rslts *ListResults) (int, error) {
 	return collectedCnt, nil
 }
 
-func MissedPairs(rslts *ListResults) (int, error) {
+func MissedPairs(missedPairs map[string]string, moduleMigrations map[string]MigrationInfo, projectMigrations map[string]MigrationInfo) (int, error) {
 	collectedCnt := 0
-	for missed := range rslts.MissedPairs {
-		matches := ValidationPattern.FindStringSubmatch(missed)
+	for missed := range missedPairs {
+		matches := MigrationPattern.FindStringSubmatch(missed)
 		if matches == nil {
 			Le("wrong format of migration")
 			continue
 		}
-		kind := matches[2]
+		migrationType := matches[2]
 
-		var modulePrefix string
-		var moduleMD5 string
-		var moduleDir string
+		var (
+			modulePrefix string
+			moduleMD5    string
+			moduleDir    string
+		)
 
-		for target, meta := range rslts.ModuleMigrations {
+		for target, meta := range moduleMigrations {
 			if meta.DownFileName == missed || meta.UpFileName == missed {
 				modulePrefix = target
 				break
 			}
 		}
-		for md5, meta := range rslts.ProjectMigrations {
+		for md5, meta := range projectMigrations {
 			if meta.Prefix == modulePrefix {
 				moduleMD5 = md5
 				moduleDir = meta.Dir
@@ -295,7 +292,7 @@ func MissedPairs(rslts *ListResults) (int, error) {
 		if modulePrefix == "" || moduleMD5 == "" {
 			return collectedCnt, fmt.Errorf("couldn't find info necessary to collect missed pair %s", missed)
 		}
-		targetModuleFileName := fmt.Sprintf("%s.%s.sql", modulePrefix, kind)
+		targetModuleFileName := fmt.Sprintf("%s.%s.sql", modulePrefix, migrationType)
 		fullTargetModuleFile := filepath.Join(moduleDir, targetModuleFileName)
 		missingProjectFile := filepath.Join(MigrationDir, missed)
 		targetModuleFile := StripDir(fullTargetModuleFile)
@@ -351,7 +348,7 @@ func MigrationValidation(path string) error {
 		migrations[fileName] = file
 		// ld "file ${file_name} check name is correct $file"
 		Ld(fmt.Sprintf("file %s check if name is correct %s", fileName, file))
-		if ValidationPattern.MatchString(fileName) {
+		if MigrationPattern.MatchString(fileName) {
 			if err := ParseIncludes(projectContext, file, ""); err != nil {
 				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
 			}
@@ -368,7 +365,7 @@ func MigrationValidation(path string) error {
 
 	for fileName, fileDir := range migrations {
 		relative := strings.TrimPrefix(fileDir, path+"/")
-		matches := ValidationPattern.FindStringSubmatch(fileName)
+		matches := MigrationPattern.FindStringSubmatch(fileName)
 		if matches == nil {
 			if _, exists := projectContext.Includes[relative]; !exists {
 				// undefined includes crawl in here and activate Le; I think that's not how it's supposed to work
@@ -406,7 +403,11 @@ func appendToFrom(newFilePath, srcFilePath, header string) error {
 	if err != nil {
 		return err
 	}
-	defer newFile.Close()
+	defer func() {
+		if closeErr := newFile.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	if _, err = newFile.WriteString(header); err != nil {
 		return err
@@ -416,7 +417,11 @@ func appendToFrom(newFilePath, srcFilePath, header string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	if _, err = io.Copy(newFile, srcFile); err != nil {
 		return err
