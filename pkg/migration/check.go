@@ -17,6 +17,7 @@ var (
 	MigrationPattern   = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+)$`)
 )
 
+// ListResults struct stores errors regarding to migration directory and saves important information that can be used to fix some of those errors.
 type ListResults struct {
 	ListWarnings []string // list of non-critical errors
 
@@ -33,6 +34,7 @@ type ListResults struct {
 	ModuleIncludes    map[string]string        // key - include, value - included; include of module migration file
 }
 
+// MigrationInfo struct is
 type MigrationInfo struct {
 	Prefix       string
 	Ext          string
@@ -41,11 +43,14 @@ type MigrationInfo struct {
 	DownFileName string
 }
 
+// Meta struct is used solely for project migration files.
 type Meta struct {
 	MetaInfo MigrationInfo
 	MD5      string
 }
 
+// MigrationList checks migration and submodule directories for errors.
+// Those errors are being added to ListResults struct.
 func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	rslts := &ListResults{}
 	rslts.MissedPairs = make(map[string]string)
@@ -55,11 +60,11 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	// getting project and module maps by reading migration directory
 	projectEntriesMap, err := getEntriesProjectMap(fsys, dir)
 	if err != nil {
-		return nil, fmt.Errorf("error getting project entries map: %w", err)
+		return nil, fmt.Errorf("error getting map of project entries: %w", err)
 	}
 	moduleEntriesMap, err := getEntriesModuleMap(fsys, dir)
 	if err != nil {
-		return nil, fmt.Errorf("error getting module entries map: %w", err)
+		return nil, fmt.Errorf("error getting map of module entries: %w", err)
 	}
 
 	// getting map where key - project file, value - migration info of meta file (if md5 is an empty string then that project file is an original one)
@@ -78,13 +83,13 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	// ProjectMigrations
 	rslts.ProjectMigrations, err = fillProjectMigrations(MetaMap)
 	if err != nil {
-		return nil, fmt.Errorf("error getting ProjectMigrations: %w", err)
+		return nil, fmt.Errorf("error filling ProjectMigrations: %w", err)
 	}
 
 	// ModuleMigrations
 	rslts.ModuleMigrations, err = fillModuleMigrations(MetaMap)
 	if err != nil {
-		return nil, fmt.Errorf("error getting ModuleMigrations: %w", err)
+		return nil, fmt.Errorf("error filling ModuleMigrations: %w", err)
 	}
 	// CHECKING PAIRS OF MIGRATION FILES
 
@@ -428,7 +433,7 @@ func getProjectParseContext(projectMap map[string]struct{}) (map[string]ParseCon
 		if !isUp {
 			continue
 		}
-		downFile, err := switchMigrationType(upFile, "down")
+		downFile, err := SwitchMigrationType(upFile, "down")
 		if err != nil {
 			return nil, fmt.Errorf("error switching migration type to down: %w", err)
 		}
@@ -451,7 +456,7 @@ func getModuleParseContext(moduleMap map[string]struct{}) (map[string]ParseConte
 		if !isUp {
 			continue
 		}
-		downFile, err := switchMigrationType(upFile, "down")
+		downFile, err := SwitchMigrationType(upFile, "down")
 		if err != nil {
 			return nil, fmt.Errorf("error switching migration type to down: %w", err)
 		}
@@ -487,10 +492,14 @@ func getMetaParseContext(metaMap map[string]Meta) (map[string]ParseContext, erro
 	return metaParseContext, nil
 }
 
-func switchMigrationType(filename, newDirection string) (string, error) {
+// SwitchMigrationType return changed filename with newDirection.
+func SwitchMigrationType(filename, newDirection string) (string, error) {
 	parts := strings.Split(filename, ".")
 	if len(parts) < 3 {
 		return "", fmt.Errorf("filename is wrong format: %s", filename)
+	}
+	if newDirection == "" {
+		return "", fmt.Errorf("empty direction string")
 	}
 	parts[len(parts)-2] = newDirection
 	return strings.Join(parts, "."), nil
@@ -500,10 +509,12 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 	incompletePairs := make(map[string]string)
 	for entryPath := range projectMap {
 		isUp := strings.HasSuffix(entryPath, ".up.sql")
-		if isUp {
+		isDown := strings.HasSuffix(entryPath, ".down.sql")
+		switch {
+		case isUp:
 			entryName := filepath.Base(entryPath)
 			entryDir := filepath.Dir(entryPath)
-			downName, err := switchMigrationType(entryName, "down")
+			downName, err := SwitchMigrationType(entryName, "down")
 			if err != nil {
 				return nil, fmt.Errorf("error switching migration type to down: %w", err)
 			}
@@ -511,10 +522,10 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 			if _, exists := projectMap[downPath]; !exists {
 				incompletePairs[downPath] = entryPath
 			}
-		} else {
+		case isDown:
 			entryName := filepath.Base(entryPath)
 			entryDir := filepath.Dir(entryPath)
-			upName, err := switchMigrationType(entryName, "up")
+			upName, err := SwitchMigrationType(entryName, "up")
 			if err != nil {
 				return nil, fmt.Errorf("error switching migration type to up: %w", err)
 			}
@@ -522,6 +533,8 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 			if _, exists := projectMap[upPath]; !exists {
 				incompletePairs[upPath] = entryPath
 			}
+		default:
+			return nil, fmt.Errorf("error file type: %s", filepath.Base(entryPath))
 		}
 	}
 	return incompletePairs, nil
@@ -566,6 +579,7 @@ func checkDeletedFiles(metaMap map[string]Meta, moduleMap map[string]struct{}) (
 	return deletedFiles, nil
 }
 
+// GetModuleMap returns the map of module files, where key - concatenated md5 of module migration pair and value - MigrationInfo struct.
 func GetModuleMap(moduleEntriesMap map[string]struct{}) (map[string]MigrationInfo, error) {
 	moduleMap := make(map[string]MigrationInfo)
 	for entry := range moduleEntriesMap {
@@ -582,6 +596,8 @@ func GetModuleMap(moduleEntriesMap map[string]struct{}) (map[string]MigrationInf
 	return moduleMap, nil
 }
 
+// GetModule reads file name and if it fits MigrationPattern then MD5 of migration pair is being calculated.
+// The function returns MigrationInfo struct and MD5 of that migration pair.
 func GetModule(entry string) (MigrationInfo, string, error) {
 	dir := filepath.Dir(entry)
 	entryName := filepath.Base(entry)
@@ -610,6 +626,7 @@ func GetModule(entry string) (MigrationInfo, string, error) {
 	}, md5, nil
 }
 
+// ConcatMD5 is used to both calculate and concatenate migration pair.
 func ConcatMD5(upPath, downPath string) (string, error) {
 	md5Up, err := FileMD5(upPath)
 	if err != nil {
@@ -629,15 +646,19 @@ func ConcatMD5(upPath, downPath string) (string, error) {
 	return md5Up + md5Down, nil
 }
 
+// IsOriginal is being used to differentiate files that have meta or do not.
 func (m Meta) IsOriginal() bool {
 	return m.MD5 == ""
 }
 
+// GetMetaMap reads projectEntryMap and sends every file's path to getMetaInfo to get MigrationInfo.
+// The result is a map where key - file name and value - meta information that's being stored in Meta struct.
+// If MigrationInfo field MD5 is empty string, then this file has no meta.
 func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, error) {
 	metaMap := make(map[string]Meta)
 	for projectPath := range projectMap {
-		projectPathTemp := filepath.ToSlash(projectPath)
-		metaEntry, md5, err := getMetaInfo(fsys, projectPathTemp)
+		projectPath = filepath.ToSlash(projectPath)
+		metaEntry, md5, err := getMetaInfo(fsys, projectPath)
 		if err != nil {
 			return nil, fmt.Errorf("error getting project: %w", err)
 		}
@@ -649,6 +670,7 @@ func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, er
 	return metaMap, nil
 }
 
+// getMetaInfo opens file and reads it to find line that starts with "#migration:". Then this line is being used to return filled MigrationInfo struct.
 func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) {
 	var (
 		prefix   string
@@ -658,7 +680,6 @@ func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) 
 		upName   string
 		downName string
 	)
-
 	projectDir := filepath.Dir(projectPath)
 	file, err := fsys.Open(projectPath)
 	if err != nil {
@@ -714,6 +735,10 @@ var (
 	done     = 2
 )
 
+// ParseContext struct is used by ParseIncludes function.
+// State field is used to check for Include Loops. Key - file, value - file's state (ranges from 1 - 2, 1 - visiting file, 2 - done visiting file).
+// Includes field is used to save includes. Key - include file, value - the file that includes include file.
+// MissingFiles field is used to save nonexistent files. Key - include file, value - the file that includes include file.
 type ParseContext struct {
 	State    map[string]int
 	Includes map[string]string
@@ -721,6 +746,7 @@ type ParseContext struct {
 	MissingFiles map[string]string // key - include; value - included
 }
 
+// NewParseContext function initializes maps of ParseContext struct.
 func NewParseContext() *ParseContext {
 	return &ParseContext{
 		State:        make(map[string]int),
@@ -729,6 +755,8 @@ func NewParseContext() *ParseContext {
 	}
 }
 
+// ParseIncludes checks file for @includes and appends it to ParseContext field Includes.
+// If ParseIncludes stumbles upon nonexistent file that is being included, that file is being appended to ParseContext field MissingFiles.
 func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 
 	Ld(fmt.Sprintf("parse file on includes %s", fileDir))

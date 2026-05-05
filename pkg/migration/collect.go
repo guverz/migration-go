@@ -409,6 +409,13 @@ func appendToFrom(newFilePath, srcFilePath, header string) error {
 		}
 	}()
 
+	if _, err := os.Stat(srcFilePath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("src file does not exist: %s", srcFilePath)
+		}
+		return err
+	}
+
 	if _, err = newFile.WriteString(header); err != nil {
 		return err
 	}

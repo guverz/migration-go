@@ -23,53 +23,120 @@ func TestAppendToFrom(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
-				})
-				includeDirPath := filepath.Join(tmpDir, "includes")
-				os.Mkdir(includeDirPath, 0755)
-				includedFilePath := filepath.Join(tmpDir, "included.txt")
-				baseIncludeName := "include"
-				os.WriteFile(includedFilePath, []byte(fmt.Sprintf("@includes/%s_0.txt", baseIncludeName)), 0644)
-				for i := 0; i < 5; i++ {
-					includePath := filepath.Join(includeDirPath, fmt.Sprintf("%s_%v.txt", baseIncludeName, i))
-					if i != 4 {
-						os.WriteFile(includePath, []byte(fmt.Sprintf("@%s_%v.txt", baseIncludeName, i+1)), 0644)
-					} else {
-						os.WriteFile(includePath, []byte(""), 0644)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
 					}
+				})
+				dstFileName := "newfile.txt"
+				srcFileName := "source.txt"
+				srcFileText := ""
+				srcFileHeader := "23"
+
+				dstFilePath := filepath.Join(tmpDir, dstFileName)
+				srcFilePath := filepath.Join(tmpDir, srcFileName)
+				if err := os.WriteFile(dstFilePath, []byte(""), 0644); err != nil {
+					t.Fatalf("failed to create dstFile: %v", err)
 				}
-				return includedFilePath, "", ""
+				if err := os.WriteFile(srcFilePath, []byte(srcFileText), 0644); err != nil {
+					t.Fatalf("failed to create srcFile: %v", err)
+				}
+
+				return dstFilePath, srcFilePath, srcFileHeader
 			},
 			wantExists: true,
-			wantHeader: "1234567890abcABC",
+			wantHeader: "23",
 			wantErr:    false,
+		},
+		{
+			name: "nonexistent dstFile",
+			setup: func(t *testing.T) (string, string, string) {
+				tmpDir, err := os.MkdirTemp("", "test_parse_includes_*")
+				if err != nil {
+					t.Fatalf("Failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				dstFileName := "newfile.txt"
+				srcFileName := "source.txt"
+				srcFileText := ""
+				srcFileHeader := "23"
+
+				dstFilePath := filepath.Join(tmpDir, dstFileName)
+				srcFilePath := filepath.Join(tmpDir, srcFileName)
+				// if err := os.WriteFile(dstFilePath, []byte{}, 0644); err != nil {
+				// 	t.Fatalf("failed to create dstFile: %v", err)
+				// }
+				if err := os.WriteFile(srcFilePath, []byte(srcFileText), 0644); err != nil {
+					t.Fatalf("failed to create srcFile: %v", err)
+				}
+
+				return dstFilePath, srcFilePath, srcFileHeader
+			},
+			wantExists: false,
+			wantHeader: "",
+			wantErr:    true,
+		},
+		{
+			name: "nonexistent srcFile",
+			setup: func(t *testing.T) (string, string, string) {
+				tmpDir, err := os.MkdirTemp("", "test_parse_includes_*")
+				if err != nil {
+					t.Fatalf("Failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				dstFileName := "newfile.txt"
+				srcFileName := "source.txt"
+				// srcFileText := ""
+				srcFileHeader := "23"
+
+				dstFilePath := filepath.Join(tmpDir, dstFileName)
+				srcFilePath := filepath.Join(tmpDir, srcFileName)
+				if err := os.WriteFile(dstFilePath, []byte{}, 0644); err != nil {
+					t.Fatalf("failed to create dstFile: %v", err)
+				}
+				// if err := os.WriteFile(srcFilePath, []byte(srcFileText), 0644); err != nil {
+				// t.Fatalf("failed to create srcFile: %v", err)
+				// }
+
+				return dstFilePath, srcFilePath, srcFileHeader
+			},
+			wantExists: true,
+			wantHeader: "",
+			wantErr:    true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			targetFile, srcFile, header := tt.setup(t)
+			dstFile, srcFile, header := tt.setup(t)
 
-			err := appendToFrom(targetFile, srcFile, header)
+			err := appendToFrom(dstFile, srcFile, header)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("appendToFrom() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
-			fileHeader, _ := os.ReadFile(targetFile)
-			var existsFlag bool
-			_, tempErr := os.Stat(targetFile)
-			if tempErr != nil {
-				existsFlag = true
+			fileHeader, err := os.ReadFile(dstFile)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					t.Errorf("error reading file: %v", err)
+				}
 			}
-			if os.IsNotExist(tempErr) {
-				existsFlag = false
+			var existsFlag bool
+			existsFlag, err = FindFileViaDir(dstFile)
+			if err != nil {
+				t.Errorf("error FindFileViaDir: %v", err)
+				return
 			}
 
 			if existsFlag != tt.wantExists {
 				t.Errorf("appendToFrom() found = %v, want %v", existsFlag, tt.wantExists)
-			}
-			if string(fileHeader) != tt.wantHeader {
-				t.Errorf("appendToFrom() found = %v, want %v", string(fileHeader), tt.wantHeader)
 			}
 			if string(fileHeader) != tt.wantHeader {
 				t.Errorf("appendToFrom() found = %v, want %v", string(fileHeader), tt.wantHeader)
@@ -94,7 +161,9 @@ func TestMissedFiles(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(migrationDir)
+					if err := os.RemoveAll(migrationDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
 				})
 				testChdirRepo(t, migrationDir)
 

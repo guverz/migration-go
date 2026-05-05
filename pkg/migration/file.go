@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+// FindFileViaDir function
 func FindFileViaDir(fileDir string) (bool, error) {
 	_, err := os.Stat(fileDir)
 	if err == nil {
@@ -22,6 +23,7 @@ func FindFileViaDir(fileDir string) (bool, error) {
 	return false, err
 }
 
+// FileMD5 function
 func FileMD5(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -42,6 +44,7 @@ func FileMD5(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// StripDir function
 func StripDir(fileDir string) string {
 	cleanDir := filepath.Clean(fileDir)
 	dirSplit := strings.Split(cleanDir, string(filepath.Separator))

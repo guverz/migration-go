@@ -2,6 +2,7 @@ package migration
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,29 +11,36 @@ import (
 func TestFindLastMigrationInfo(t *testing.T) {
 	tests := []struct {
 		name         string
-		setup        func(t *testing.T) (string, string)
+		setup        func(t *testing.T) (string, fs.FS)
 		wantMax      int
 		wantLastFile string
 		wantErr      bool
 	}{
 		{
 			name: "normal",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) (string, fs.FS) {
 				tmpDir, err := os.MkdirTemp("", "test_find_last_migration_*")
 				if err != nil {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
 				base := "test-func-0.1.0-1"
 				for i := 1; i < 12; i++ {
 					fileUp := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.up.sql", base, i))
 					fileDown := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.down.sql", base, i))
-					os.WriteFile(fileUp, []byte(""), 0644)
-					os.WriteFile(fileDown, []byte(""), 0644)
+					if err := os.WriteFile(fileUp, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
+					if err := os.WriteFile(fileDown, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
 				}
-				return base, tmpDir
+				fsys := os.DirFS(tmpDir)
+				return base, fsys
 			},
 			wantMax:      11,
 			wantLastFile: "test-func-0.1.0-1-11.up.sql",
@@ -40,29 +48,40 @@ func TestFindLastMigrationInfo(t *testing.T) {
 		},
 		{
 			name: "wrong base",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) (string, fs.FS) {
 				tmpDir, err := os.MkdirTemp("", "test_find_last_migration_*")
 				if err != nil {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
 				base := "test-func-0.1.0-1"
 				wrongBase := "wrongTest-func-0.1.0-1"
 				for i := 1; i < 6; i++ {
 					fileUp := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.up.sql", base, i))
 					fileDown := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.down.sql", base, i))
-					os.WriteFile(fileUp, []byte(""), 0644)
-					os.WriteFile(fileDown, []byte(""), 0644)
+					if err := os.WriteFile(fileUp, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
+					if err := os.WriteFile(fileDown, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
 				}
 				for i := 6; i < 13; i++ {
 					fileUp := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.up.sql", wrongBase, i))
 					fileDown := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.down.sql", wrongBase, i))
-					os.WriteFile(fileUp, []byte(""), 0644)
-					os.WriteFile(fileDown, []byte(""), 0644)
+					if err := os.WriteFile(fileUp, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
+					if err := os.WriteFile(fileDown, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
 				}
-				return base, tmpDir
+				fsys := os.DirFS(tmpDir)
+				return base, fsys
 			},
 			wantMax:      5,
 			wantLastFile: "test-func-0.1.0-1-5.up.sql",
@@ -70,23 +89,30 @@ func TestFindLastMigrationInfo(t *testing.T) {
 		},
 		{
 			name: "wrong base",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) (string, fs.FS) {
 				tmpDir, err := os.MkdirTemp("", "test_find_last_migration_*")
 				if err != nil {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
 				base := "test-func-0.1.0-1"
 				wrongBase := "wrongTest-func-0.1.0-1"
 				for i := 1; i < 6; i++ {
 					fileUp := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.up.sql", base, i))
 					fileDown := filepath.Join(tmpDir, fmt.Sprintf("%s-%v.down.sql", base, i))
-					os.WriteFile(fileUp, []byte(""), 0644)
-					os.WriteFile(fileDown, []byte(""), 0644)
+					if err := os.WriteFile(fileUp, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
+					if err := os.WriteFile(fileDown, []byte(""), 0644); err != nil {
+						t.Fatalf("failed to create file: %v", err)
+					}
 				}
-				return wrongBase, tmpDir
+				fsys := os.DirFS(tmpDir)
+				return wrongBase, fsys
 			},
 			wantMax:      0,
 			wantLastFile: "",
@@ -94,16 +120,19 @@ func TestFindLastMigrationInfo(t *testing.T) {
 		},
 		{
 			name: "empty Dir",
-			setup: func(t *testing.T) (string, string) {
+			setup: func(t *testing.T) (string, fs.FS) {
 				tmpDir, err := os.MkdirTemp("", "test_find_last_migration_*")
 				if err != nil {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
+				fsys := os.DirFS(tmpDir)
 				base := "test-func-0.1.0-1"
-				return base, tmpDir
+				return base, fsys
 			},
 			wantMax:      0,
 			wantLastFile: "",
@@ -112,9 +141,9 @@ func TestFindLastMigrationInfo(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseName, tmpDir := tt.setup(t)
+			baseName, fsys := tt.setup(t)
 
-			foundMax, foundLast, err := findLastMigrationInfo(tmpDir, baseName)
+			foundMax, foundLast, err := findLastMigrationInfo(fsys, ".", baseName)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("findLastMigrationInfo() error = %v, wantErr %v", err, tt.wantErr)
@@ -146,7 +175,9 @@ func TestCreateMigrationFiles(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
 				base := "test-func-0.1.0-1"
 				includeHelp := false
@@ -174,7 +205,9 @@ func TestCreateMigrationFiles(t *testing.T) {
 					t.Fatalf("Failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(tmpDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to deleted temp dir: %v", err)
+					}
 				})
 				base := "test-func-0.1.0-1"
 				includeHelp := true
@@ -188,23 +221,31 @@ func TestCreateMigrationFiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			baseName, tmpDir, help := tt.setup(t)
 			t.Cleanup(func() {
-				os.RemoveAll(tmpDir)
+				if err := os.RemoveAll(tmpDir); err != nil {
+					t.Fatalf("failed to deleted temp dir: %v", err)
+				}
 			})
 			err := createMigrationFiles(tmpDir, baseName, help)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("createMigrationFiles() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 			upFile := filepath.Join(tmpDir, fmt.Sprintf("%s.up.sql", baseName))
 			downFile := filepath.Join(tmpDir, fmt.Sprintf("%s.down.sql", baseName))
 
-			rsltUp, _ := FindFileViaDir(upFile)
-			rsltDown, _ := FindFileViaDir(downFile)
+			rsltUp, err := FindFileViaDir(upFile)
+			if err != nil {
+				t.Fatalf("error FindFileViaDir: %v", err)
+			}
+			rsltDown, err := FindFileViaDir(downFile)
+			if err != nil {
+				t.Fatalf("error FindFileViaDir: %v", err)
+			}
 			var result bool
 			if rsltUp && rsltDown {
 				result = true
 			} else if !rsltUp && !rsltDown {
 				result = false
-			}
-			if (err != nil) != tt.wantErr {
-				t.Errorf("createMigrationFiles() error = %v, wantErr %v", err, tt.wantErr)
-				return
 			}
 
 			if result != tt.wantExists {

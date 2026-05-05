@@ -10,6 +10,7 @@ import (
 	versiongo "github.com/AlexBurnes/version-go/pkg/version"
 )
 
+// GetModuleDir function
 func GetModuleDir(fsys fs.FS, path string) ([]string, error) {
 	rslt := []string{}
 	outerDir := filepath.Dir(path)
@@ -40,6 +41,7 @@ func GetModuleDir(fsys fs.FS, path string) ([]string, error) {
 	return rslt, nil
 }
 
+// Describe function
 func Describe(dir, arg string) (rslt string, err error) {
 	switch arg {
 	case "project":
