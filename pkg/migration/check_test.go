@@ -1526,7 +1526,7 @@ func TestCheckMissedFiles(t *testing.T) {
 		wantMissedLen int
 	}{
 		{
-			name: "normal behaviour (every module file exists)",
+			name: "normal behaviour (new module migration files)",
 			setup: func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo) {
 				projectMigrations := map[string]MigrationInfo{}
 				moduleMap := map[string]MigrationInfo{}
@@ -1539,6 +1539,67 @@ func TestCheckMissedFiles(t *testing.T) {
 						case (i%3 != 0) && (j%2 == 0):
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
 							moduleMap[md5] = MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
+								Dir:          moduleDir,
+								Ext:          "sql",
+								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
+								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
+							}
+						case (i%3 != 0) && (j%2 != 0):
+							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
+							projectMigrations[md5] = MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
+								Dir:          moduleDir,
+								Ext:          "sql",
+								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
+								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
+							}
+						default:
+							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
+							projectMigrations[md5] = MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
+								Dir:          moduleDir,
+								Ext:          "sql",
+								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
+								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
+							}
+							moduleMap[md5] = MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
+								Dir:          moduleDir,
+								Ext:          "sql",
+								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
+								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
+							}
+						}
+					}
+				}
+
+				return projectMigrations, moduleMap
+			},
+			wantMissedLen: 28,
+		},
+		{
+			name: "normal behaviour (changed module migration files)",
+			setup: func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo) {
+				projectMigrations := map[string]MigrationInfo{}
+				moduleMap := map[string]MigrationInfo{}
+				// baseProjectName := "test-project-0.1.0"
+				baseModuleName := "test-module-0.1.0"
+				moduleDir := filepath.Join("module", "migrations")
+				for i := 1; i <= 10; i++ {
+					for j := 1; j <= 5; j++ {
+						switch {
+						case (i%3 != 0) && (j%2 == 0):
+							firstMD5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
+							moduleMap[firstMD5] = MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
+								Dir:          moduleDir,
+								Ext:          "sql",
+								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
+								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
+							}
+							secondMD5 := fmt.Sprintf("402bf15aa9%d4b224e8f5700f62f30d93%d0f26a78304b90d67c51c3331144ae56", j, i)
+							projectMigrations[secondMD5] = MigrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1623,6 +1684,282 @@ func TestCheckMissedFiles(t *testing.T) {
 	}
 }
 
-func TestGetProjectParseContext(t *testing.T) {
+func TestGetMapParseContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) map[string]struct{}
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name: "normal behaviour",
+			setup: func(t *testing.T) map[string]struct{} {
+				tmpDir, err := os.MkdirTemp("", "test_get_map_parsecontext_*")
+				if err != nil {
+					t.Errorf("failed to created dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				projectEntriesMap := make(map[string]struct{})
+				projectDir := filepath.Join(tmpDir, "migrations")
+				includesDir := filepath.Join(projectDir, "includes")
+				if err := os.MkdirAll(includesDir, 0755); err != nil {
+					t.Fatalf("error creaing directories: %v", err)
+				}
+				baseProjectName := "test-project-0.1.0"
+				baseIncludeName := "include"
+				for i := 1; i <= 10; i++ {
+					projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
+					projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
+					projectUpPath := filepath.Join(projectDir, projectUpName)
+					projectDownPath := filepath.Join(projectDir, projectDownName)
+					includeName := fmt.Sprintf("%s%d.sql", baseIncludeName, i-1)
+					includePath := filepath.Join(includesDir, includeName)
+					if err := os.WriteFile(projectUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					if err := os.WriteFile(projectDownPath, []byte{}, 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					if err := os.WriteFile(includePath, []byte{}, 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					projectEntriesMap[projectUpPath] = struct{}{}
+					projectEntriesMap[projectDownPath] = struct{}{}
+
+				}
+
+				return projectEntriesMap
+			},
+			wantLen: 10,
+			wantErr: false,
+		},
+		{
+			name: "only down files",
+			setup: func(t *testing.T) map[string]struct{} {
+				tmpDir, err := os.MkdirTemp("", "test_get_map_parsecontext_*")
+				if err != nil {
+					t.Errorf("failed to created dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				projectEntriesMap := make(map[string]struct{})
+				projectDir := filepath.Join(tmpDir, "migrations")
+				includesDir := filepath.Join(projectDir, "includes")
+				if err := os.MkdirAll(includesDir, 0755); err != nil {
+					t.Fatalf("error creaing directories: %v", err)
+				}
+				baseProjectName := "test-project"
+				baseIncludeName := "include"
+				for i := 1; i <= 10; i++ {
+					projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
+					projectDownPath := filepath.Join(projectDir, projectDownName)
+					includeName := fmt.Sprintf("%s%d.sql", baseIncludeName, i-1)
+					includePath := filepath.Join(includesDir, includeName)
+					if err := os.WriteFile(projectDownPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					if err := os.WriteFile(includePath, []byte{}, 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					projectEntriesMap[projectDownPath] = struct{}{}
+
+				}
+
+				return projectEntriesMap
+			},
+			wantLen: 0,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectMigrations := tt.setup(t)
+
+			rslt, err := getMapParseContext(projectMigrations)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getProjectParseContext() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if len(rslt) != tt.wantLen {
+				t.Errorf("getProjectParseContext() found = %v, want %v", len(rslt), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestGetMetaParseContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) map[string]Meta
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name: "normal behaviour",
+			setup: func(t *testing.T) map[string]Meta {
+				tmpDir, err := os.MkdirTemp("", "test_get_meta_parsecontext_*")
+				if err != nil {
+					t.Errorf("failed to created dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				metaMap := make(map[string]Meta)
+				moduleDir := filepath.Join(tmpDir, "module", "migrations")
+				includesDir := filepath.Join(moduleDir, "includes")
+				if err := os.MkdirAll(includesDir, 0755); err != nil {
+					t.Fatalf("error creaing directories: %v", err)
+				}
+				projectDir := filepath.Join(tmpDir, "migrations")
+				baseModuleName := "test-module-0.2.0"
+				baseProjectName := "test-project-0.1.0"
+				baseIncludeName := "include"
+				for i := 1; i <= 25; i++ {
+					if i%5 == 0 {
+						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
+						projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
+						projectUpPath := filepath.Join(projectDir, projectUpName)
+						projectDownPath := filepath.Join(projectDir, projectDownName)
+						metaMap[projectUpPath] = Meta{
+							MetaInfo: MigrationInfo{},
+							MD5:      "",
+						}
+						metaMap[projectDownPath] = Meta{
+							MetaInfo: MigrationInfo{},
+							MD5:      "",
+						}
+					} else {
+						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
+						projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
+						projectUpPath := filepath.Join(projectDir, projectUpName)
+						projectDownPath := filepath.Join(projectDir, projectDownName)
+						moduleUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
+						moduleDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, i-1)
+						moduleUpPath := filepath.Join(moduleDir, moduleUpName)
+						moduleDownPath := filepath.Join(moduleDir, moduleDownName)
+						includeName := fmt.Sprintf("%s%d.sql", baseIncludeName, i-1)
+						includePath := filepath.Join(includesDir, includeName)
+						if err := os.WriteFile(moduleUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
+						if err := os.WriteFile(moduleDownPath, []byte{}, 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
+						if err := os.WriteFile(includePath, []byte{}, 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
+						md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", i, i%3)
+						metaMap[projectUpPath] = Meta{
+							MetaInfo: MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
+								Ext:          "sql",
+								Dir:          moduleDir,
+								UpFileName:   moduleUpName,
+								DownFileName: moduleDownName,
+							},
+							MD5: md5,
+						}
+						metaMap[projectDownPath] = Meta{
+							MetaInfo: MigrationInfo{
+								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
+								Ext:          "sql",
+								Dir:          moduleDir,
+								UpFileName:   moduleUpName,
+								DownFileName: moduleDownName,
+							},
+							MD5: md5,
+						}
+					}
+
+				}
+				return metaMap
+			},
+			wantLen: 20,
+			wantErr: false,
+		},
+		{
+			name: "only down files",
+			setup: func(t *testing.T) map[string]Meta {
+				tmpDir, err := os.MkdirTemp("", "test_get_meta_parsecontext_*")
+				if err != nil {
+					t.Errorf("failed to created dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				metaMap := make(map[string]Meta)
+				moduleDir := filepath.Join(tmpDir, "module", "migrations")
+				includesDir := filepath.Join(moduleDir, "includes")
+				if err := os.MkdirAll(includesDir, 0755); err != nil {
+					t.Fatalf("error creaing directories: %v", err)
+				}
+				projectDir := filepath.Join(tmpDir, "migrations")
+				baseModuleName := "test-module-0.2.0"
+				baseProjectName := "test-project-0.1.0"
+				baseIncludeName := "include"
+				for i := 1; i <= 25; i++ {
+
+					projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
+					projectDownPath := filepath.Join(projectDir, projectDownName)
+					moduleUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
+					moduleDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, i-1)
+					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
+					moduleDownPath := filepath.Join(moduleDir, moduleDownName)
+					includeName := fmt.Sprintf("%s%d.sql", baseIncludeName, i-1)
+					includePath := filepath.Join(includesDir, includeName)
+					if err := os.WriteFile(moduleUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					if err := os.WriteFile(moduleDownPath, []byte{}, 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					if err := os.WriteFile(includePath, []byte{}, 0644); err != nil {
+						t.Fatalf("error creating file: %v", err)
+					}
+					md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", i, i%3)
+					metaMap[projectDownPath] = Meta{
+						MetaInfo: MigrationInfo{
+							Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
+							Ext:          "sql",
+							Dir:          moduleDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						},
+						MD5: md5,
+					}
+
+				}
+				return metaMap
+			},
+			wantLen: 0,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectMigrations := tt.setup(t)
+
+			rslt, err := getMetaParseContext(projectMigrations)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getProjectParseContext() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if len(rslt) != tt.wantLen {
+				t.Errorf("getProjectParseContext() found = %v, want %v", len(rslt), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestGetProjectMD5Includes(t *testing.T) {
 
 }

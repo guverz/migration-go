@@ -123,11 +123,11 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	// INCLUDES
 
 	// filling in ParseContext for project, module and meta
-	mapProjectIncludes, err := getProjectParseContext(projectEntriesMap)
+	mapProjectIncludes, err := getMapParseContext(projectEntriesMap)
 	if err != nil {
 		return nil, fmt.Errorf("error getting project includes information: %w", err)
 	}
-	mapModuleIncludes, err := getModuleParseContext(moduleEntriesMap)
+	mapModuleIncludes, err := getMapParseContext(moduleEntriesMap)
 	if err != nil {
 		return nil, fmt.Errorf("error getting module includes information: %w", err)
 	}
@@ -425,10 +425,10 @@ func getProjectMD5Includes(projectContextMap map[string]ParseContext) (map[strin
 	return projectMD5Includes, nil
 }
 
-func getProjectParseContext(projectMap map[string]struct{}) (map[string]ParseContext, error) {
-	projectParseContext := make(map[string]ParseContext)
-	for upFile := range projectMap {
-		projectContext := NewParseContext()
+func getMapParseContext(entriesMap map[string]struct{}) (map[string]ParseContext, error) {
+	entryParseContext := make(map[string]ParseContext)
+	for upFile := range entriesMap {
+		entryContext := NewParseContext()
 		isUp := strings.HasSuffix(upFile, ".up.sql")
 		if !isUp {
 			continue
@@ -437,38 +437,15 @@ func getProjectParseContext(projectMap map[string]struct{}) (map[string]ParseCon
 		if err != nil {
 			return nil, fmt.Errorf("error switching migration type to down: %w", err)
 		}
-		if err := ParseIncludes(projectContext, upFile, ""); err != nil {
-			return nil, fmt.Errorf("error parsing project (up) for includes: %w", err)
+		if err := ParseIncludes(entryContext, upFile, ""); err != nil {
+			return nil, fmt.Errorf("error parsing migration file (up) for includes: %w", err)
 		}
-		if err := ParseIncludes(projectContext, downFile, ""); err != nil {
-			return nil, fmt.Errorf("error parsing project (down) for includes: %w", err)
+		if err := ParseIncludes(entryContext, downFile, ""); err != nil {
+			return nil, fmt.Errorf("error parsing migration file (down) for includes: %w", err)
 		}
-		projectParseContext[upFile] = *projectContext
+		entryParseContext[upFile] = *entryContext
 	}
-	return projectParseContext, nil
-}
-
-func getModuleParseContext(moduleMap map[string]struct{}) (map[string]ParseContext, error) {
-	moduleParseContext := make(map[string]ParseContext)
-	for upFile := range moduleMap {
-		moduleContext := NewParseContext()
-		isUp := strings.HasSuffix(upFile, ".up.sql")
-		if !isUp {
-			continue
-		}
-		downFile, err := SwitchMigrationType(upFile, "down")
-		if err != nil {
-			return nil, fmt.Errorf("error switching migration type to down: %w", err)
-		}
-		if err := ParseIncludes(moduleContext, upFile, ""); err != nil {
-			return nil, fmt.Errorf("error parsing module (up) for includes: %w", err)
-		}
-		if err := ParseIncludes(moduleContext, downFile, ""); err != nil {
-			return nil, fmt.Errorf("error parsing module (down) for includes: %w", err)
-		}
-		moduleParseContext[upFile] = *moduleContext
-	}
-	return moduleParseContext, nil
+	return entryParseContext, nil
 }
 
 func getMetaParseContext(metaMap map[string]Meta) (map[string]ParseContext, error) {
@@ -657,8 +634,9 @@ func (m Meta) IsOriginal() bool {
 func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, error) {
 	metaMap := make(map[string]Meta)
 	for projectPath := range projectMap {
-		projectPath = filepath.ToSlash(projectPath)
-		metaEntry, md5, err := getMetaInfo(fsys, projectPath)
+		// fsys works with pathes where separator is '/'
+		projectPathTemp := filepath.ToSlash(projectPath)
+		metaEntry, md5, err := getMetaInfo(fsys, projectPathTemp)
 		if err != nil {
 			return nil, fmt.Errorf("error getting project: %w", err)
 		}
