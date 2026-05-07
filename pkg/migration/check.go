@@ -249,14 +249,7 @@ func checkDeletedIncludes(mapProjectIncludes map[string]ParseContext, metaMap ma
 		if meta.IsOriginal() {
 			continue
 		}
-		migrationMD5Includes := make(map[string]string)
 		for projectInclude, projectIncluded := range projectContext.Includes {
-			md5, err := FileMD5(projectInclude)
-			if err != nil {
-				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
-			}
-			migrationMD5Includes[md5] = projectInclude
-
 			includeDir, err := filepath.Rel(dir, projectInclude)
 			if err != nil {
 				return nil, fmt.Errorf("error getting relative path: %w", err)
@@ -287,7 +280,8 @@ func checkMissedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map
 			}
 			migrationMD5Includes[md5] = projectInclude
 		}
-		moduleContext := mapModuleIncludes[filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.UpFileName)]
+		moduleUpPath := filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.UpFileName)
+		moduleContext := mapModuleIncludes[moduleUpPath]
 
 		for metaInclude, metaIncluded := range moduleContext.Includes {
 			metaMD5, err := FileMD5(metaInclude)
@@ -394,11 +388,11 @@ func fillProjectIncludes(projectContextMap map[string]ParseContext, metaMap map[
 	return projectIncludes
 }
 
-// getting ListResults field - ModuleIncludes
-func fillModuleIncludes(moduleContextMap map[string]ParseContext, projectMD5Includes map[string]string) (map[string]string, error) {
+// filling ListResults field - ModuleIncludes
+func fillModuleIncludes(metaContextMap map[string]ParseContext, projectMD5Includes map[string]string) (map[string]string, error) {
 	moduleIncludes := make(map[string]string)
-	for _, ModuleContext := range moduleContextMap {
-		for include, included := range ModuleContext.Includes {
+	for _, MetaContext := range metaContextMap {
+		for include, included := range MetaContext.Includes {
 			md5, err := FileMD5(include)
 			if err != nil {
 				return nil, fmt.Errorf("error calculating md5 of include: %w", err)
