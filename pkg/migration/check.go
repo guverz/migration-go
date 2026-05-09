@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -52,54 +55,122 @@ type Meta struct {
 // MigrationList checks migration and submodule directories for errors.
 // Those errors are being added to ListResults struct.
 func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
+	t1 := time.Now()
 	rslts := &ListResults{}
 	rslts.MissedPairs = make(map[string]string)
 	rslts.LostPairs = make(map[string]string)
 	dir = filepath.ToSlash(filepath.Clean(dir))
 
 	// getting project and module maps by reading migration directory
-	projectEntriesMap, err := getEntriesProjectMap(fsys, dir)
-	if err != nil {
-		return nil, fmt.Errorf("error getting map of project entries: %w", err)
-	}
-	moduleEntriesMap, err := getEntriesModuleMap(fsys, dir)
-	if err != nil {
-		return nil, fmt.Errorf("error getting map of module entries: %w", err)
+	var (
+		projectEntriesMap map[string]struct{}
+		moduleEntriesMap  map[string]struct{}
+		err               error
+	)
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		entries, localErr := getEntriesProjectMap(fsys, dir)
+		if localErr != nil {
+			return fmt.Errorf("error getting map of project entries: %w", localErr)
+		}
+		projectEntriesMap = entries
+		return nil
+	})
+	g.Go(func() error {
+		entries, localErr := getEntriesModuleMap(fsys, dir)
+		if localErr != nil {
+			return fmt.Errorf("error getting map of module entries: %w", localErr)
+		}
+		moduleEntriesMap = entries
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// getting map where key - project file, value - migration info of meta file (if md5 is an empty string then that project file is an original one)
-	MetaMap, err := GetMetaMap(fsys, projectEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error getting map of projects: %w", err)
-	}
+	var (
+		MetaMap   map[string]Meta
+		ModuleMap map[string]MigrationInfo
+	)
+	g = new(errgroup.Group)
+	g.Go(func() error {
+		metaMap, localErr := GetMetaMap(fsys, projectEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error getting map of projects: %w", localErr)
+		}
+		MetaMap = metaMap
+		return nil
+	})
 	// getting map where key - concat md5, value - migration info of module file (only files with complete pairs)
-	ModuleMap, err := GetModuleMap(moduleEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error getting map of modules: %w", err)
+	g.Go(func() error {
+		moduleMap, localErr := GetModuleMap(moduleEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error getting map of modules: %w", localErr)
+		}
+		ModuleMap = moduleMap
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// FILLING IN MIGRATION FILE RELATED FIELDS OF LISTRESULTS STRUCT
 
-	// ProjectMigrations
-	rslts.ProjectMigrations, err = fillProjectMigrations(MetaMap)
-	if err != nil {
-		return nil, fmt.Errorf("error filling ProjectMigrations: %w", err)
-	}
-
-	// ModuleMigrations
-	rslts.ModuleMigrations, err = fillModuleMigrations(MetaMap)
-	if err != nil {
-		return nil, fmt.Errorf("error filling ModuleMigrations: %w", err)
+	// ProjectMigrations, ModuleMigrations and DeletedFiles
+	g = new(errgroup.Group)
+	g.Go(func() error {
+		projectMigrations, localErr := fillProjectMigrations(MetaMap)
+		if localErr != nil {
+			return fmt.Errorf("error filling ProjectMigrations: %w", localErr)
+		}
+		rslts.ProjectMigrations = projectMigrations
+		return nil
+	})
+	g.Go(func() error {
+		moduleMigrations, localErr := fillModuleMigrations(MetaMap)
+		if localErr != nil {
+			return fmt.Errorf("error filling ModuleMigrations: %w", localErr)
+		}
+		rslts.ModuleMigrations = moduleMigrations
+		return nil
+	})
+	g.Go(func() error {
+		deletedFiles, localErr := checkDeletedFiles(MetaMap, moduleEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error checking for deleted files: %w", localErr)
+		}
+		rslts.DeletedFiles = deletedFiles
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	// CHECKING PAIRS OF MIGRATION FILES
 
-	missingProjectPairs, err := checkPairs(projectEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error checking project pairs: %w", err)
-	}
-	missingModulePairs, err := checkPairs(moduleEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error checking module pairs: %w", err)
+	var (
+		missingProjectPairs map[string]string
+		missingModulePairs  map[string]string
+	)
+	g = new(errgroup.Group)
+	g.Go(func() error {
+		pairs, localErr := checkPairs(projectEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error checking project pairs: %w", localErr)
+		}
+		missingProjectPairs = pairs
+		return nil
+	})
+	g.Go(func() error {
+		pairs, localErr := checkPairs(moduleEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error checking module pairs: %w", localErr)
+		}
+		missingModulePairs = pairs
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// missing pairs in modules' dirs can't be fixed, so it's being added to LostPairs immediately
@@ -112,40 +183,75 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 
 	// CHECKING FOR DELETED OR MISSED MIGRATION FILES
 
-	// deletedFiles
-	rslts.DeletedFiles, err = checkDeletedFiles(MetaMap, moduleEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error checking for deleted files: %w", err)
-	}
 	// missedFiles
 	rslts.MissedFiles = checkMissedFiles(rslts.ProjectMigrations, ModuleMap)
 
 	// INCLUDES
 
 	// filling in ParseContext for project, module and meta
-	mapProjectIncludes, err := getMapParseContext(projectEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error getting project includes information: %w", err)
-	}
-	mapModuleIncludes, err := getMapParseContext(moduleEntriesMap)
-	if err != nil {
-		return nil, fmt.Errorf("error getting module includes information: %w", err)
-	}
-	mapMetaIncludes, err := getMetaParseContext(MetaMap)
-	if err != nil {
-		return nil, fmt.Errorf("error getting meta includes information: %w", err)
+	var (
+		mapProjectIncludes map[string]ParseContext
+		mapModuleIncludes  map[string]ParseContext
+		mapMetaIncludes    map[string]ParseContext
+	)
+	g = new(errgroup.Group)
+	g.Go(func() error {
+		projectIncludes, localErr := getMapParseContext(projectEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error getting project includes information: %w", localErr)
+		}
+		mapProjectIncludes = projectIncludes
+		return nil
+	})
+	g.Go(func() error {
+		moduleIncludes, localErr := getMapParseContext(moduleEntriesMap)
+		if localErr != nil {
+			return fmt.Errorf("error getting module includes information: %w", localErr)
+		}
+		mapModuleIncludes = moduleIncludes
+		return nil
+	})
+	g.Go(func() error {
+		metaIncludes, localErr := getMetaParseContext(MetaMap)
+		if localErr != nil {
+			return fmt.Errorf("error getting meta includes information: %w", localErr)
+		}
+		mapMetaIncludes = metaIncludes
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// ProjectMD5Includes map[string]string        // key - MD5, value - include; md5 of includes used in the project directory (used to be in ListResults)
-	ProjectMD5Includes, err := getProjectMD5Includes(mapProjectIncludes)
-	if err != nil {
-		return nil, fmt.Errorf("error getting ProjectMD5Includes: %w", err)
-	}
+	var ProjectMD5Includes map[string]string
 
 	// FILLING IN INCLUDES RELATED FIELDS OF LISTRESULTS STRUCT
 
-	// ProjectIncludes
-	rslts.ProjectIncludes = fillProjectIncludes(mapProjectIncludes, MetaMap)
+	g = new(errgroup.Group)
+	g.Go(func() error {
+		projectMD5Includes, localErr := getProjectMD5Includes(mapProjectIncludes)
+		if localErr != nil {
+			return fmt.Errorf("error getting ProjectMD5Includes: %w", localErr)
+		}
+		ProjectMD5Includes = projectMD5Includes
+		return nil
+	})
+	g.Go(func() error {
+		rslts.ProjectIncludes = fillProjectIncludes(mapProjectIncludes, MetaMap)
+		return nil
+	})
+	g.Go(func() error {
+		deletedIncludes, localErr := checkDeletedIncludes(mapProjectIncludes, MetaMap)
+		if localErr != nil {
+			return fmt.Errorf("error checking migration directory for deleted includes: %w", localErr)
+		}
+		rslts.DeletedIncludes = deletedIncludes
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	// ModuleIncludes
 	rslts.ModuleIncludes, err = fillModuleIncludes(mapMetaIncludes, ProjectMD5Includes)
@@ -153,11 +259,6 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 		return nil, fmt.Errorf("error getting ModuleIncludes: %w", err)
 	}
 
-	// DeletedIncludes
-	rslts.DeletedIncludes, err = checkDeletedIncludes(mapProjectIncludes, MetaMap)
-	if err != nil {
-		return nil, fmt.Errorf("error checking migration directory for deleted includes: %w", err)
-	}
 	// MissedIncludes
 	rslts.MissedIncludes, err = checkMissedIncludes(mapProjectIncludes, MetaMap, mapModuleIncludes)
 	if err != nil {
@@ -177,7 +278,7 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 		return nil, fmt.Errorf("error processing includes from MissedFiles: %w", err)
 	}
 	maps.Copy(rslts.MissedIncludes, missedIncludes)
-
+	fmt.Println(time.Since(t1))
 	return rslts, nil
 }
 
@@ -803,4 +904,51 @@ func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 
 	ctx.State[fileDir] = done
 	return nil
+}
+
+func getEntriesProjectMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
+	entriesProjectMap := make(map[string]struct{})
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, fmt.Errorf("error reading dir: %w", err)
+	}
+	for _, entry := range entries {
+		match := MigrationPattern.MatchString(entry.Name())
+		if !match {
+			continue
+		}
+		projectPath := filepath.Join(dir, entry.Name())
+		entriesProjectMap[projectPath] = struct{}{}
+	}
+	return entriesProjectMap, nil
+}
+
+func getEntriesModuleMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
+	entriesModuleMap := make(map[string]struct{})
+	moduleDirs, err := GetModuleDir(fsys, dir)
+	if err != nil {
+		return nil, fmt.Errorf("error getting info on modules' path: %w", err)
+	}
+	for _, moduleDir := range moduleDirs {
+		moduleDir = filepath.ToSlash(moduleDir)
+		moduleMigration := filepath.Join(moduleDir, "migrations")
+		moduleMigration = filepath.ToSlash(moduleMigration)
+		entries, err := fs.ReadDir(fsys, moduleMigration)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("error reading directory: %w", err)
+		}
+		for _, entry := range entries {
+			match := MigrationPattern.MatchString(entry.Name())
+			if !match {
+				continue
+			}
+			modulePath := filepath.Join(moduleMigration, entry.Name())
+			entriesModuleMap[modulePath] = struct{}{}
+		}
+	}
+
+	return entriesModuleMap, nil
 }

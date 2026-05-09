@@ -2990,3 +2990,204 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 		})
 	}
 }
+
+func TestGetEntriesProjectMap(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(t *testing.T) fs.FS
+		wantEntryLen int
+		wantErr      bool
+	}{
+		{
+			name: "normal",
+			setup: func(t *testing.T) fs.FS {
+				projectDir, err := os.MkdirTemp("", "test_get_entries_project_map_*")
+				if err != nil {
+					t.Fatalf("failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(projectDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				fsys := os.DirFS(projectDir)
+				baseProjectName := "test-project-0.1.0"
+				for i := 1; i < 5; i++ {
+					for j := 1; j < 4; j++ {
+						projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
+						projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
+						projectUpPath := filepath.Join(projectDir, projectUpName)
+						projectDownPath := filepath.Join(projectDir, projectDownName)
+						if err := os.WriteFile(projectUpPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+						if err := os.WriteFile(projectDownPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+					}
+				}
+				return fsys
+			},
+			wantEntryLen: 24,
+			wantErr:      false,
+		},
+		{
+			name: "wrong format",
+			setup: func(t *testing.T) fs.FS {
+				projectDir, err := os.MkdirTemp("", "test_get_entries_project_map_*")
+				if err != nil {
+					t.Fatalf("failed to create dir: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(projectDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
+				})
+				fsys := os.DirFS(projectDir)
+				baseProjectName := "test-project-0.1.0"
+				for i := 1; i < 5; i++ {
+					for j := 1; j < 4; j++ {
+						projectUpName := fmt.Sprintf("%s-%v-%v.left.sql", baseProjectName, i, j)
+						projectDownName := fmt.Sprintf("%s-%v-%v.right.sql", baseProjectName, i, j)
+						projectUpPath := filepath.Join(projectDir, projectUpName)
+						projectDownPath := filepath.Join(projectDir, projectDownName)
+						if err := os.WriteFile(projectUpPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+						if err := os.WriteFile(projectDownPath, []byte(""), 0644); err != nil {
+							t.Fatalf("failed to create file: %v", err)
+						}
+					}
+				}
+				return fsys
+			},
+			wantEntryLen: 0,
+			wantErr:      false,
+		},
+		{
+			name: "fsys check",
+			setup: func(t *testing.T) fs.FS {
+				fsys := fstest.MapFS{
+					"proj1.txt":  {Data: []byte{}},
+					"proj2.txt":  {Data: []byte{}},
+					"ignore.log": {Data: []byte{}},
+				}
+
+				return fsys
+			},
+			wantEntryLen: 0,
+			wantErr:      false,
+		},
+		{
+			name: "fsys check2",
+			setup: func(t *testing.T) fs.FS {
+				fsys := make(fstest.MapFS)
+				wrongProjectName := "1test23"
+				baseProjectName := "test-project-0.1.0"
+				for i := 1; i <= 10; i++ {
+					for j := 1; j <= 5; j++ {
+
+						if i == 3 && j == 2 {
+							projectUpName := fmt.Sprintf("%s-left.test", wrongProjectName)
+							projectDownName := fmt.Sprintf("%s-right.test", wrongProjectName)
+							fsys[projectUpName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+							fsys[projectDownName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+						} else {
+							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
+							projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
+							fsys[projectUpName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+							fsys[projectDownName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+						}
+					}
+				}
+
+				return fsys
+			},
+			wantEntryLen: 98,
+			wantErr:      false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := tt.setup(t)
+
+			resultMap, err := getEntriesProjectMap(fsys, ".")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getEntriesProjectMap() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(resultMap) != tt.wantEntryLen {
+				t.Errorf("getEntriesProjectMap() found = %v, want %v", len(resultMap), tt.wantEntryLen)
+			}
+		})
+	}
+}
+
+func TestGetEntriesModuleMap(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(t *testing.T) fs.FS
+		wantEntryLen int
+		wantErr      bool
+	}{
+		{
+			name: "fsys check",
+			setup: func(t *testing.T) fs.FS {
+				fsys := fstest.MapFS{
+					".gitmodules":           {Data: []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module")},
+					"migrations/proj1.txt":  {Data: []byte{}},
+					"migrations/proj2.txt":  {Data: []byte{}},
+					"migrations/ignore.log": {Data: []byte{}},
+				}
+
+				return fsys
+			},
+			wantEntryLen: 0,
+			wantErr:      false,
+		},
+		{
+			name: "fsys check2",
+			setup: func(t *testing.T) fs.FS {
+				fsys := make(fstest.MapFS)
+				wrongProjectName := "1test23"
+				baseProjectName := "test-project-0.1.0"
+				moduleDir := "module/migrations"
+				gitmodulesText := "[submodule \"module\"]\n\tpath = module\n\turl = ./module"
+				fsys[".gitmodules"] = &fstest.MapFile{Data: []byte(gitmodulesText), Mode: 0644}
+				for i := 1; i <= 10; i++ {
+					for j := 1; j <= 5; j++ {
+						if i == 3 && j == 2 {
+							moduleUpName := fmt.Sprintf("%s/%s-left.test", moduleDir, wrongProjectName)
+							moduleDownName := fmt.Sprintf("%s/%s-right.test", moduleDir, wrongProjectName)
+							fsys[moduleUpName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+							fsys[moduleDownName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+						} else {
+							moduleUpName := fmt.Sprintf("%s/%s-%v-%v.up.sql", moduleDir, baseProjectName, i, j)
+							moduleDownName := fmt.Sprintf("%s/%s-%v-%v.down.sql", moduleDir, baseProjectName, i, j)
+							fsys[moduleUpName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+							fsys[moduleDownName] = &fstest.MapFile{Data: []byte(""), Mode: 0644}
+						}
+					}
+				}
+
+				return fsys
+			},
+			wantEntryLen: 98,
+			wantErr:      false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := tt.setup(t)
+
+			resultMap, err := getEntriesModuleMap(fsys, ".")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getEntriesModuleMap() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(resultMap) != tt.wantEntryLen {
+				t.Errorf("getEntriesModuleMap() found = %v, want %v", len(resultMap), tt.wantEntryLen)
+			}
+		})
+	}
+}
