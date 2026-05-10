@@ -38,7 +38,7 @@ func testChdirRepo(t *testing.T, repoRoot string) {
 // testMetaPathForModuleFile returns the path string to embed in #migration:... after the same
 // StripDir logic as the CLI, without relying on absolute temp paths.
 func testMetaPathForModuleFile(moduleSQLFileName string) string {
-	return StripDir(filepath.Join(testMigrationStripPrefix, "module", "migrations", moduleSQLFileName))
+	return stripDir(filepath.Join(testMigrationStripPrefix, "module", "migrations", moduleSQLFileName))
 }
 
 func TestParseIncludes(t *testing.T) {
@@ -170,17 +170,17 @@ func TestParseIncludes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			includedFile := tt.setup(t)
-			ctx := NewParseContext()
-			err := ParseIncludes(ctx, includedFile, "")
+			ctx := newParseContext()
+			err := parseIncludes(ctx, includedFile, "")
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseInclude() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseInclude() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if len(ctx.MissingFiles) != tt.wantMissingFiles {
-				t.Errorf("ParseInclude() found = %v, want %v", len(ctx.MissingFiles), tt.wantMissingFiles)
+				t.Errorf("parseInclude() found = %v, want %v", len(ctx.MissingFiles), tt.wantMissingFiles)
 			}
 			if len(ctx.Includes) != tt.wantIncludes {
-				t.Errorf("ParseInclude() found = %v, want %v", len(ctx.Includes), tt.wantIncludes)
+				t.Errorf("parseInclude() found = %v, want %v", len(ctx.Includes), tt.wantIncludes)
 			}
 		})
 	}
@@ -262,7 +262,7 @@ func TestConcatMD5(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			upPath, downPath := tt.setup(tmpDir)
 
-			resultMD5, err := ConcatMD5(upPath, downPath)
+			resultMD5, err := concatMD5(upPath, downPath)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ConcatMD5() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -278,7 +278,7 @@ func TestConcatMD5(t *testing.T) {
 func TestGetMetaInfo(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (fs.FS, string)
+		setup   func() (fs.FS, string)
 		wantDir string
 		wantUp  string
 		wantMD5 string
@@ -286,7 +286,7 @@ func TestGetMetaInfo(t *testing.T) {
 	}{
 		{
 			name: "fsys check",
-			setup: func(t *testing.T) (fs.FS, string) {
+			setup: func() (fs.FS, string) {
 				fsys := fstest.MapFS{
 					".gitmodules":           {Data: []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module")},
 					"migrations/proj1.txt":  {Data: []byte{}},
@@ -303,7 +303,7 @@ func TestGetMetaInfo(t *testing.T) {
 		},
 		{
 			name: "fsys check2",
-			setup: func(t *testing.T) (fs.FS, string) {
+			setup: func() (fs.FS, string) {
 				fsys := make(fstest.MapFS)
 				var builder strings.Builder
 
@@ -328,7 +328,7 @@ func TestGetMetaInfo(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fsys, file := tt.setup(t)
+			fsys, file := tt.setup()
 
 			resultStruct, md5, err := getMetaInfo(fsys, file)
 			if (err != nil) != tt.wantErr {
@@ -351,14 +351,14 @@ func TestGetMetaInfo(t *testing.T) {
 func TestGetMetaMap(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func(t *testing.T) (fs.FS, map[string]struct{})
+		setup       func() (fs.FS, map[string]struct{})
 		wantLen     int
 		wantMetaCnt int
 		wantErr     bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (fs.FS, map[string]struct{}) {
+			setup: func() (fs.FS, map[string]struct{}) {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -390,7 +390,7 @@ func TestGetMetaMap(t *testing.T) {
 		},
 		{
 			name: "wrong meta field",
-			setup: func(t *testing.T) (fs.FS, map[string]struct{}) {
+			setup: func() (fs.FS, map[string]struct{}) {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -417,7 +417,7 @@ func TestGetMetaMap(t *testing.T) {
 		},
 		{
 			name: "wrong meta migration name",
-			setup: func(t *testing.T) (fs.FS, map[string]struct{}) {
+			setup: func() (fs.FS, map[string]struct{}) {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -445,24 +445,24 @@ func TestGetMetaMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fsys, theMap := tt.setup(t)
+			fsys, theMap := tt.setup()
 
-			resultMap, err := GetMetaMap(fsys, theMap)
+			resultMap, err := getMetaMap(fsys, theMap)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetMetaMap() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getMetaMap() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			metaCnt := 0
 			for _, meta := range resultMap {
-				if !meta.IsOriginal() {
+				if !meta.isOriginal() {
 					metaCnt++
 				}
 			}
 			if len(resultMap) != tt.wantLen {
-				t.Errorf("GetMetaMap() found = %v, want %v", len(resultMap), tt.wantLen)
+				t.Errorf("getMetaMap() found = %v, want %v", len(resultMap), tt.wantLen)
 			}
 			if metaCnt != tt.wantMetaCnt {
-				t.Errorf("GetMetaMap() found = %v, want %v", metaCnt, tt.wantMetaCnt)
+				t.Errorf("getMetaMap() found = %v, want %v", metaCnt, tt.wantMetaCnt)
 			}
 		})
 	}
@@ -471,14 +471,14 @@ func TestGetMetaMap(t *testing.T) {
 func TestGetModule(t *testing.T) {
 	tests := []struct {
 		name       string
-		setup      func(t *testing.T) string
+		setup      func() string
 		wantPrefix string
 		wantMD5    string
 		wantErr    bool
 	}{
 		{
 			name: "normal behaviour for an empty file",
-			setup: func(t *testing.T) string {
+			setup: func() string {
 				tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -507,7 +507,7 @@ func TestGetModule(t *testing.T) {
 		},
 		{
 			name: "get down file and miss up file",
-			setup: func(t *testing.T) string {
+			setup: func() string {
 				tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -535,7 +535,7 @@ func TestGetModule(t *testing.T) {
 		},
 		{
 			name: "lorem ipsum",
-			setup: func(t *testing.T) string {
+			setup: func() string {
 				tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -565,7 +565,7 @@ func TestGetModule(t *testing.T) {
 		},
 		{
 			name: "no files",
-			setup: func(t *testing.T) string {
+			setup: func() string {
 				tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -584,7 +584,7 @@ func TestGetModule(t *testing.T) {
 		},
 		{
 			name: "dir",
-			setup: func(t *testing.T) string {
+			setup: func() string {
 				tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -607,18 +607,18 @@ func TestGetModule(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filePath := tt.setup(t)
+			filePath := tt.setup()
 
-			resultStruct, resultMD5, err := GetModule(filePath)
+			resultStruct, resultMD5, err := getModule(filePath)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetModule() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getModule() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if resultStruct.Prefix != tt.wantPrefix {
-				t.Errorf("GetModule() prefix = %v, want %v", resultStruct.Prefix, tt.wantPrefix)
+				t.Errorf("getModule() prefix = %v, want %v", resultStruct.Prefix, tt.wantPrefix)
 			}
 			if resultMD5 != tt.wantMD5 {
-				t.Errorf("GetModule() resultMD5 = %v, want %v", resultMD5, tt.wantMD5)
+				t.Errorf("getModule() resultMD5 = %v, want %v", resultMD5, tt.wantMD5)
 			}
 		})
 	}
@@ -627,13 +627,13 @@ func TestGetModule(t *testing.T) {
 func TestGetModuleMap(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]struct{}
+		setup   func() map[string]struct{}
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				tmpDir, err := os.MkdirTemp("", "test_get_module_map_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -698,7 +698,7 @@ func TestGetModuleMap(t *testing.T) {
 		},
 		{
 			name: "incomplete pair",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				tmpDir, err := os.MkdirTemp("", "test_get_module_map_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -759,15 +759,15 @@ func TestGetModuleMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			moduleMap := tt.setup(t)
+			moduleMap := tt.setup()
 
-			resultMap, err := GetModuleMap(moduleMap)
+			resultMap, err := getModuleMap(moduleMap)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetModuleMap() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getModuleMap() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if len(resultMap) != tt.wantLen {
-				t.Errorf("GetModuleMap() len = %v, want %v", len(resultMap), tt.wantLen)
+				t.Errorf("getModuleMap() len = %v, want %v", len(resultMap), tt.wantLen)
 			}
 		})
 	}
@@ -805,13 +805,13 @@ func TestSwitchMigrationType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := SwitchMigrationType(tt.filename, tt.direction)
+			result, err := switchMigrationType(tt.filename, tt.direction)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("SwitchMigrationType() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("switchMigrationType() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if result != tt.wantResult {
-				t.Errorf("SwitchMigrationType() result = %v, want %v", result, tt.wantResult)
+				t.Errorf("switchMigrationType() result = %v, want %v", result, tt.wantResult)
 			}
 		})
 	}
@@ -874,13 +874,13 @@ func TestGetProjectInfo(t *testing.T) {
 func TestFillProjectMigrations(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]Meta
+		setup   func() map[string]meta
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -904,7 +904,7 @@ func TestFillProjectMigrations(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error getting map of project entries: %v", err)
 				}
-				theMap, err := GetMetaMap(fsys, tempMap)
+				theMap, err := getMetaMap(fsys, tempMap)
 				if err != nil {
 					t.Fatalf("error getting meta map: %v", err)
 				}
@@ -915,16 +915,16 @@ func TestFillProjectMigrations(t *testing.T) {
 		},
 		{
 			name: "mock map",
-			setup: func(t *testing.T) map[string]Meta {
-				theMap := make(map[string]Meta)
+			setup: func() map[string]meta {
+				theMap := make(map[string]meta)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
 					for j := 1; j <= 5; j++ {
 						if (i%2 != 0) && (j%5 != 0) {
 							projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, j)
 							projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, j)
-							theMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							theMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -933,8 +933,8 @@ func TestFillProjectMigrations(t *testing.T) {
 								},
 								MD5: fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i),
 							}
-							theMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{
+							theMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -946,12 +946,12 @@ func TestFillProjectMigrations(t *testing.T) {
 						} else {
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 							projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
-							theMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{},
+							theMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{},
 								MD5:      "",
 							}
-							theMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{},
+							theMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{},
 								MD5:      "",
 							}
 						}
@@ -965,7 +965,7 @@ func TestFillProjectMigrations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metaMap := tt.setup(t)
+			metaMap := tt.setup()
 
 			resultMap, err := fillProjectMigrations(metaMap)
 			if (err != nil) != tt.wantErr {
@@ -982,13 +982,13 @@ func TestFillProjectMigrations(t *testing.T) {
 func TestFillModuleMigrations(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]Meta
+		setup   func() map[string]meta
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -1012,7 +1012,7 @@ func TestFillModuleMigrations(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error getting map of project entries: %v", err)
 				}
-				theMap, err := GetMetaMap(fsys, tempMap)
+				theMap, err := getMetaMap(fsys, tempMap)
 				if err != nil {
 					t.Fatalf("error getting meta map: %v", err)
 				}
@@ -1023,7 +1023,7 @@ func TestFillModuleMigrations(t *testing.T) {
 		},
 		{
 			name: "lack of down files",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				fsys := make(fstest.MapFS)
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -1044,7 +1044,7 @@ func TestFillModuleMigrations(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error getting map of project entries: %v", err)
 				}
-				theMap, err := GetMetaMap(fsys, tempMap)
+				theMap, err := getMetaMap(fsys, tempMap)
 				if err != nil {
 					t.Fatalf("error getting meta map: %v", err)
 				}
@@ -1055,7 +1055,7 @@ func TestFillModuleMigrations(t *testing.T) {
 		},
 		{
 			name: "wrong migration file name",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				fsys := make(fstest.MapFS)
 				wrongProjectName := "5#$134ss"
 				for i := 1; i <= 10; i++ {
@@ -1079,7 +1079,7 @@ func TestFillModuleMigrations(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error getting map of project entries: %v", err)
 				}
-				theMap, err := GetMetaMap(fsys, tempMap)
+				theMap, err := getMetaMap(fsys, tempMap)
 				if err != nil {
 					t.Fatalf("error getting meta map: %v", err)
 				}
@@ -1091,7 +1091,7 @@ func TestFillModuleMigrations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metaMap := tt.setup(t)
+			metaMap := tt.setup()
 
 			resultMap, err := fillModuleMigrations(metaMap)
 			if (err != nil) != tt.wantErr {
@@ -1108,13 +1108,13 @@ func TestFillModuleMigrations(t *testing.T) {
 func TestCheckPairs(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T) map[string]struct{}
+		setup          func() map[string]struct{}
 		wantMissingLen int
 		wantErr        bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				entryMap := make(map[string]struct{})
 				// wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
@@ -1139,7 +1139,7 @@ func TestCheckPairs(t *testing.T) {
 		},
 		{
 			name: "wrong migration type (right/left)",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				entryMap := make(map[string]struct{})
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -1165,7 +1165,7 @@ func TestCheckPairs(t *testing.T) {
 		},
 		{
 			name: "wrong migration name",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				entryMap := make(map[string]struct{})
 				wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
@@ -1193,7 +1193,7 @@ func TestCheckPairs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entryMap := tt.setup(t)
+			entryMap := tt.setup()
 
 			resultMap, err := checkPairs(entryMap)
 			if (err != nil) != tt.wantErr {
@@ -1210,15 +1210,15 @@ func TestCheckPairs(t *testing.T) {
 func TestProcessMissingProjectPairs(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T) (map[string]string, map[string]Meta)
+		setup          func() (map[string]string, map[string]meta)
 		wantMissingLen int
 		wantLostLen    int
 	}{
 		{
 			name: "normal behaviour (only missed)",
-			setup: func(t *testing.T) (map[string]string, map[string]Meta) {
+			setup: func() (map[string]string, map[string]meta) {
 				entryMap := make(map[string]struct{})
-				metaMap := map[string]Meta{}
+				metaMap := map[string]meta{}
 				// wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -1226,8 +1226,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 						if (i%3 != 0) && (j%2 == 0) {
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 							entryMap[projectUpName] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1241,8 +1241,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 							projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
 							entryMap[projectUpName] = struct{}{}
 							entryMap[projectDownName] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1251,8 +1251,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 								},
 								MD5: fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i),
 							}
-							metaMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1275,9 +1275,9 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 		},
 		{
 			name: "normal behaviour (missed & lost)",
-			setup: func(t *testing.T) (map[string]string, map[string]Meta) {
+			setup: func() (map[string]string, map[string]meta) {
 				entryMap := make(map[string]struct{})
-				metaMap := map[string]Meta{}
+				metaMap := map[string]meta{}
 				// wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
 				for i := 1; i <= 10; i++ {
@@ -1286,8 +1286,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 						case (i%3 != 0) && (j%2 == 0):
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 							entryMap[projectUpName] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1299,8 +1299,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 						case (i%3 != 0) && (j%2 != 0):
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 							entryMap[projectUpName] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{},
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{},
 								MD5:      "",
 							}
 						default:
@@ -1308,8 +1308,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 							projectDownName := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
 							entryMap[projectUpName] = struct{}{}
 							entryMap[projectDownName] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1318,8 +1318,8 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 								},
 								MD5: fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i),
 							}
-							metaMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("test-module-0.0.0.0.1-%d-%d", i, j),
 									Dir:          "module/migrations",
 									Ext:          "pdf",
@@ -1343,7 +1343,7 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			missingMap, metaMap := tt.setup(t)
+			missingMap, metaMap := tt.setup()
 
 			lostMap, missMap := processMissingProjectPairs(missingMap, metaMap)
 			if len(lostMap) != tt.wantLostLen {
@@ -1359,15 +1359,15 @@ func TestProcessMissingProjectPairs(t *testing.T) {
 func TestCheckDeletedFiles(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T) (map[string]Meta, map[string]struct{})
+		setup          func() (map[string]meta, map[string]struct{})
 		wantDeletedLen int
 		wantErr        bool
 	}{
 		{
 			name: "normal behaviour (every module file exists)",
-			setup: func(t *testing.T) (map[string]Meta, map[string]struct{}) {
+			setup: func() (map[string]meta, map[string]struct{}) {
 				moduleEntriesMap := make(map[string]struct{})
-				metaMap := map[string]Meta{}
+				metaMap := map[string]meta{}
 				baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
 				moduleDir := filepath.Join("module", "migrations")
@@ -1379,8 +1379,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 							moduleUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseModuleName, i, j)
 							moduleUpPath := filepath.Join(moduleDir, moduleUpName)
 							moduleEntriesMap[moduleUpPath] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1394,8 +1394,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 							moduleUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseModuleName, i, j)
 							moduleUpPath := filepath.Join(moduleDir, moduleUpName)
 							moduleEntriesMap[moduleUpPath] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{},
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{},
 								MD5:      "",
 							}
 						default:
@@ -1407,8 +1407,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 							moduleDownPath := filepath.Join(moduleDir, moduleDownName)
 							moduleEntriesMap[moduleUpPath] = struct{}{}
 							moduleEntriesMap[moduleDownPath] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1417,8 +1417,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 								},
 								MD5: fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i),
 							}
-							metaMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1438,9 +1438,9 @@ func TestCheckDeletedFiles(t *testing.T) {
 		},
 		{
 			name: "normal behaviour (some module files are missing)",
-			setup: func(t *testing.T) (map[string]Meta, map[string]struct{}) {
+			setup: func() (map[string]meta, map[string]struct{}) {
 				moduleEntriesMap := make(map[string]struct{})
-				metaMap := map[string]Meta{}
+				metaMap := map[string]meta{}
 				baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
 				moduleDir := filepath.Join("module", "migrations")
@@ -1449,8 +1449,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 						switch {
 						case (i%3 != 0) && (j%2 == 0):
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1461,8 +1461,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 							}
 						case (i%3 != 0) && (j%2 != 0):
 							projectUpName := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{},
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{},
 								MD5:      "",
 							}
 						default:
@@ -1474,8 +1474,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 							moduleDownPath := filepath.Join(moduleDir, moduleDownName)
 							moduleEntriesMap[moduleUpPath] = struct{}{}
 							moduleEntriesMap[moduleDownPath] = struct{}{}
-							metaMap[projectUpName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectUpName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1484,8 +1484,8 @@ func TestCheckDeletedFiles(t *testing.T) {
 								},
 								MD5: fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i),
 							}
-							metaMap[projectDownName] = Meta{
-								MetaInfo: MigrationInfo{
+							metaMap[projectDownName] = meta{
+								MetaInfo: migrationInfo{
 									Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 									Dir:          moduleDir,
 									Ext:          "sql",
@@ -1506,7 +1506,7 @@ func TestCheckDeletedFiles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metaMap, moduleEntriesMap := tt.setup(t)
+			metaMap, moduleEntriesMap := tt.setup()
 
 			rslt, err := checkDeletedFiles(metaMap, moduleEntriesMap)
 			if (err != nil) != tt.wantErr {
@@ -1522,14 +1522,14 @@ func TestCheckDeletedFiles(t *testing.T) {
 func TestCheckMissedFiles(t *testing.T) {
 	tests := []struct {
 		name          string
-		setup         func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo)
+		setup         func() (map[string]migrationInfo, map[string]migrationInfo)
 		wantMissedLen int
 	}{
 		{
 			name: "normal behaviour (new module migration files)",
-			setup: func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo) {
-				projectMigrations := map[string]MigrationInfo{}
-				moduleMap := map[string]MigrationInfo{}
+			setup: func() (map[string]migrationInfo, map[string]migrationInfo) {
+				projectMigrations := map[string]migrationInfo{}
+				moduleMap := map[string]migrationInfo{}
 				// baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
 				moduleDir := filepath.Join("module", "migrations")
@@ -1538,7 +1538,7 @@ func TestCheckMissedFiles(t *testing.T) {
 						switch {
 						case (i%3 != 0) && (j%2 == 0):
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							moduleMap[md5] = MigrationInfo{
+							moduleMap[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1547,7 +1547,7 @@ func TestCheckMissedFiles(t *testing.T) {
 							}
 						case (i%3 != 0) && (j%2 != 0):
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							projectMigrations[md5] = MigrationInfo{
+							projectMigrations[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1556,14 +1556,14 @@ func TestCheckMissedFiles(t *testing.T) {
 							}
 						default:
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							projectMigrations[md5] = MigrationInfo{
+							projectMigrations[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
 								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
 								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
 							}
-							moduleMap[md5] = MigrationInfo{
+							moduleMap[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1580,9 +1580,9 @@ func TestCheckMissedFiles(t *testing.T) {
 		},
 		{
 			name: "normal behaviour (changed module migration files)",
-			setup: func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo) {
-				projectMigrations := map[string]MigrationInfo{}
-				moduleMap := map[string]MigrationInfo{}
+			setup: func() (map[string]migrationInfo, map[string]migrationInfo) {
+				projectMigrations := map[string]migrationInfo{}
+				moduleMap := map[string]migrationInfo{}
 				// baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
 				moduleDir := filepath.Join("module", "migrations")
@@ -1591,7 +1591,7 @@ func TestCheckMissedFiles(t *testing.T) {
 						switch {
 						case (i%3 != 0) && (j%2 == 0):
 							firstMD5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							moduleMap[firstMD5] = MigrationInfo{
+							moduleMap[firstMD5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1599,7 +1599,7 @@ func TestCheckMissedFiles(t *testing.T) {
 								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
 							}
 							secondMD5 := fmt.Sprintf("402bf15aa9%d4b224e8f5700f62f30d93%d0f26a78304b90d67c51c3331144ae56", j, i)
-							projectMigrations[secondMD5] = MigrationInfo{
+							projectMigrations[secondMD5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1608,7 +1608,7 @@ func TestCheckMissedFiles(t *testing.T) {
 							}
 						case (i%3 != 0) && (j%2 != 0):
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							projectMigrations[md5] = MigrationInfo{
+							projectMigrations[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1617,14 +1617,14 @@ func TestCheckMissedFiles(t *testing.T) {
 							}
 						default:
 							md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-							projectMigrations[md5] = MigrationInfo{
+							projectMigrations[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
 								UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
 								DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
 							}
-							moduleMap[md5] = MigrationInfo{
+							moduleMap[md5] = migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 								Dir:          moduleDir,
 								Ext:          "sql",
@@ -1641,23 +1641,23 @@ func TestCheckMissedFiles(t *testing.T) {
 		},
 		{
 			name: "normal behaviour (every module file exists)",
-			setup: func(t *testing.T) (map[string]MigrationInfo, map[string]MigrationInfo) {
-				projectMigrations := map[string]MigrationInfo{}
-				moduleMap := map[string]MigrationInfo{}
+			setup: func() (map[string]migrationInfo, map[string]migrationInfo) {
+				projectMigrations := map[string]migrationInfo{}
+				moduleMap := map[string]migrationInfo{}
 				// baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
 				moduleDir := filepath.Join("module", "migrations")
 				for i := 1; i <= 10; i++ {
 					for j := 1; j <= 5; j++ {
 						md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", j, i)
-						projectMigrations[md5] = MigrationInfo{
+						projectMigrations[md5] = migrationInfo{
 							Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 							Dir:          moduleDir,
 							Ext:          "sql",
 							UpFileName:   fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, j),
 							DownFileName: fmt.Sprintf("%s-%d-%d.down.sql", baseModuleName, i, j),
 						}
-						moduleMap[md5] = MigrationInfo{
+						moduleMap[md5] = migrationInfo{
 							Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, j),
 							Dir:          moduleDir,
 							Ext:          "sql",
@@ -1674,7 +1674,7 @@ func TestCheckMissedFiles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectMigrations, moduleMap := tt.setup(t)
+			projectMigrations, moduleMap := tt.setup()
 
 			rslt := checkMissedFiles(projectMigrations, moduleMap)
 			if len(rslt) != tt.wantMissedLen {
@@ -1687,13 +1687,13 @@ func TestCheckMissedFiles(t *testing.T) {
 func TestGetMapParseContext(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]struct{}
+		setup   func() map[string]struct{}
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				tmpDir, err := os.MkdirTemp("", "test_get_map_parsecontext_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -1739,7 +1739,7 @@ func TestGetMapParseContext(t *testing.T) {
 		},
 		{
 			name: "only down files",
-			setup: func(t *testing.T) map[string]struct{} {
+			setup: func() map[string]struct{} {
 				tmpDir, err := os.MkdirTemp("", "test_get_map_parsecontext_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -1780,7 +1780,7 @@ func TestGetMapParseContext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectMigrations := tt.setup(t)
+			projectMigrations := tt.setup()
 
 			rslt, err := getMapParseContext(projectMigrations)
 			if (err != nil) != tt.wantErr {
@@ -1796,13 +1796,13 @@ func TestGetMapParseContext(t *testing.T) {
 func TestGetMetaParseContext(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]Meta
+		setup   func() map[string]meta
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				tmpDir, err := os.MkdirTemp("", "test_get_meta_parsecontext_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -1812,7 +1812,7 @@ func TestGetMetaParseContext(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				metaMap := make(map[string]Meta)
+				metaMap := make(map[string]meta)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				includesDir := filepath.Join(moduleDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -1828,12 +1828,12 @@ func TestGetMetaParseContext(t *testing.T) {
 						projectDownName := fmt.Sprintf("%s-%d-%d.down.sql", baseProjectName, i, i-1)
 						projectUpPath := filepath.Join(projectDir, projectUpName)
 						projectDownPath := filepath.Join(projectDir, projectDownName)
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{},
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{},
 							MD5:      "",
 						}
-						metaMap[projectDownPath] = Meta{
-							MetaInfo: MigrationInfo{},
+						metaMap[projectDownPath] = meta{
+							MetaInfo: migrationInfo{},
 							MD5:      "",
 						}
 					} else {
@@ -1857,8 +1857,8 @@ func TestGetMetaParseContext(t *testing.T) {
 							t.Fatalf("error creating file: %v", err)
 						}
 						md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", i, i%3)
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
 								Ext:          "sql",
 								Dir:          moduleDir,
@@ -1867,8 +1867,8 @@ func TestGetMetaParseContext(t *testing.T) {
 							},
 							MD5: md5,
 						}
-						metaMap[projectDownPath] = Meta{
-							MetaInfo: MigrationInfo{
+						metaMap[projectDownPath] = meta{
+							MetaInfo: migrationInfo{
 								Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
 								Ext:          "sql",
 								Dir:          moduleDir,
@@ -1887,7 +1887,7 @@ func TestGetMetaParseContext(t *testing.T) {
 		},
 		{
 			name: "only down files",
-			setup: func(t *testing.T) map[string]Meta {
+			setup: func() map[string]meta {
 				tmpDir, err := os.MkdirTemp("", "test_get_meta_parsecontext_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -1897,7 +1897,7 @@ func TestGetMetaParseContext(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				metaMap := make(map[string]Meta)
+				metaMap := make(map[string]meta)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				includesDir := filepath.Join(moduleDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -1927,8 +1927,8 @@ func TestGetMetaParseContext(t *testing.T) {
 						t.Fatalf("error creating file: %v", err)
 					}
 					md5 := fmt.Sprintf("402bf15aa94%db224e8f5700f62f30d930%df26a78304b90d67c51c3331144ae56", i, i%3)
-					metaMap[projectDownPath] = Meta{
-						MetaInfo: MigrationInfo{
+					metaMap[projectDownPath] = meta{
+						MetaInfo: migrationInfo{
 							Prefix:       fmt.Sprintf("%s-%d-%d", baseModuleName, i, i-1),
 							Ext:          "sql",
 							Dir:          moduleDir,
@@ -1947,7 +1947,7 @@ func TestGetMetaParseContext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metaMap := tt.setup(t)
+			metaMap := tt.setup()
 
 			rslt, err := getMetaParseContext(metaMap)
 			if (err != nil) != tt.wantErr {
@@ -1963,13 +1963,13 @@ func TestGetMetaParseContext(t *testing.T) {
 func TestGetProjectMD5Includes(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) map[string]ParseContext
+		setup   func() map[string]parseContext
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]ParseContext {
+			setup: func() map[string]parseContext {
 				tmpDir, err := os.MkdirTemp("", "test_get_project_md5_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -1979,7 +1979,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
+				projectContext := make(map[string]parseContext)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				includesDir := filepath.Join(projectDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -1996,7 +1996,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 					includesMap := make(map[string]string)
 					projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 					includesMap[includePath] = projectUpName
-					projectContext[projectUpName] = ParseContext{
+					projectContext[projectUpName] = parseContext{
 						Includes: includesMap,
 					}
 				}
@@ -2007,7 +2007,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 		},
 		{
 			name: "same includes properties",
-			setup: func(t *testing.T) map[string]ParseContext {
+			setup: func() map[string]parseContext {
 				tmpDir, err := os.MkdirTemp("", "test_get_project_md5_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2017,7 +2017,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
+				projectContext := make(map[string]parseContext)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				includesDir := filepath.Join(projectDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -2034,7 +2034,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 					includesMap := make(map[string]string)
 					projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 					includesMap[includePath] = projectUpName
-					projectContext[projectUpName] = ParseContext{
+					projectContext[projectUpName] = parseContext{
 						Includes: includesMap,
 					}
 				}
@@ -2045,7 +2045,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 		},
 		{
 			name: "several includes",
-			setup: func(t *testing.T) map[string]ParseContext {
+			setup: func() map[string]parseContext {
 				tmpDir, err := os.MkdirTemp("", "test_get_project_md5_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2055,7 +2055,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
+				projectContext := make(map[string]parseContext)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				includesDir := filepath.Join(projectDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -2079,7 +2079,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, j)
 						includesMap[includePath1] = projectUpName
 						includesMap[includePath2] = projectUpName
-						projectContext[projectUpName] = ParseContext{
+						projectContext[projectUpName] = parseContext{
 							Includes: includesMap,
 						}
 					}
@@ -2092,7 +2092,7 @@ func TestGetProjectMD5Includes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectContext := tt.setup(t)
+			projectContext := tt.setup()
 
 			rslt, err := getProjectMD5Includes(projectContext)
 			if (err != nil) != tt.wantErr {
@@ -2108,12 +2108,12 @@ func TestGetProjectMD5Includes(t *testing.T) {
 func TestFillProjectIncludes(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (map[string]ParseContext, map[string]Meta)
+		setup   func() (map[string]parseContext, map[string]meta)
 		wantLen int
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta) {
+			setup: func() (map[string]parseContext, map[string]meta) {
 				tmpDir, err := os.MkdirTemp("", "test_fill_project_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2123,8 +2123,8 @@ func TestFillProjectIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				includesDir := filepath.Join(projectDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -2143,11 +2143,11 @@ func TestFillProjectIncludes(t *testing.T) {
 						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 						projectUpPath := filepath.Join(projectDir, projectUpName)
 						includesMap[includePath] = projectUpPath
-						projectContext[projectUpPath] = ParseContext{
+						projectContext[projectUpPath] = parseContext{
 							Includes: includesMap,
 						}
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{},
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{},
 							MD5:      "temp",
 						}
 					} else {
@@ -2160,11 +2160,11 @@ func TestFillProjectIncludes(t *testing.T) {
 						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 						projectUpPath := filepath.Join(projectDir, projectUpName)
 						includesMap[includePath] = projectUpPath
-						projectContext[projectUpPath] = ParseContext{
+						projectContext[projectUpPath] = parseContext{
 							Includes: includesMap,
 						}
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{},
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{},
 							MD5:      "",
 						}
 					}
@@ -2176,7 +2176,7 @@ func TestFillProjectIncludes(t *testing.T) {
 		},
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta) {
+			setup: func() (map[string]parseContext, map[string]meta) {
 				tmpDir, err := os.MkdirTemp("", "test_fill_project_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2186,8 +2186,8 @@ func TestFillProjectIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				includesDir := filepath.Join(projectDir, "includes")
 				if err := os.MkdirAll(includesDir, 0755); err != nil {
@@ -2205,11 +2205,11 @@ func TestFillProjectIncludes(t *testing.T) {
 					projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 					projectUpPath := filepath.Join(projectDir, projectUpName)
 					includesMap[includePath] = projectUpPath
-					projectContext[projectUpPath] = ParseContext{
+					projectContext[projectUpPath] = parseContext{
 						Includes: includesMap,
 					}
-					metaMap[projectUpPath] = Meta{
-						MetaInfo: MigrationInfo{},
+					metaMap[projectUpPath] = meta{
+						MetaInfo: migrationInfo{},
 						MD5:      "meta",
 					}
 				}
@@ -2220,7 +2220,7 @@ func TestFillProjectIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectContext, metaMap := tt.setup(t)
+			projectContext, metaMap := tt.setup()
 
 			rslt := fillProjectIncludes(projectContext, metaMap)
 			if len(rslt) != tt.wantLen {
@@ -2233,13 +2233,13 @@ func TestFillProjectIncludes(t *testing.T) {
 func TestFillModuleIncludes(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (map[string]ParseContext, map[string]string)
+		setup   func() (map[string]parseContext, map[string]string)
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]string) {
+			setup: func() (map[string]parseContext, map[string]string) {
 				tmpDir, err := os.MkdirTemp("", "test_fill_module_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2249,7 +2249,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				metaContext := make(map[string]ParseContext)
+				metaContext := make(map[string]parseContext)
 				projectMD5Includes := make(map[string]string)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				includesDir := filepath.Join(moduleDir, "includes")
@@ -2271,7 +2271,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						metaUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 						metaUpPath := filepath.Join(moduleDir, metaUpName)
 						includesMap[includePath] = metaUpPath
-						metaContext[metaUpPath] = ParseContext{
+						metaContext[metaUpPath] = parseContext{
 							Includes: includesMap,
 						}
 						projectMD5Includes[md5] = includePath
@@ -2286,7 +2286,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						metaUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 						metaUpPath := filepath.Join(moduleDir, metaUpName)
 						includesMap[includePath] = metaUpPath
-						metaContext[metaUpPath] = ParseContext{
+						metaContext[metaUpPath] = parseContext{
 							Includes: includesMap,
 						}
 						projectMD5Includes[md5] = includePath
@@ -2299,7 +2299,7 @@ func TestFillModuleIncludes(t *testing.T) {
 		},
 		{
 			name: "no include file",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]string) {
+			setup: func() (map[string]parseContext, map[string]string) {
 				tmpDir, err := os.MkdirTemp("", "test_fill_module_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2309,7 +2309,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				metaContext := make(map[string]ParseContext)
+				metaContext := make(map[string]parseContext)
 				projectMD5Includes := make(map[string]string)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				includesDir := filepath.Join(moduleDir, "includes")
@@ -2327,7 +2327,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						metaUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 						metaUpPath := filepath.Join(moduleDir, metaUpName)
 						includesMap[includePath] = metaUpPath
-						metaContext[metaUpPath] = ParseContext{
+						metaContext[metaUpPath] = parseContext{
 							Includes: includesMap,
 						}
 						projectMD5Includes[md5] = includePath
@@ -2342,7 +2342,7 @@ func TestFillModuleIncludes(t *testing.T) {
 						metaUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 						metaUpPath := filepath.Join(moduleDir, metaUpName)
 						includesMap[includePath] = metaUpPath
-						metaContext[metaUpPath] = ParseContext{
+						metaContext[metaUpPath] = parseContext{
 							Includes: includesMap,
 						}
 						projectMD5Includes[md5] = includePath
@@ -2356,7 +2356,7 @@ func TestFillModuleIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectContext, projectMD5Includes := tt.setup(t)
+			projectContext, projectMD5Includes := tt.setup()
 
 			rslt, err := fillModuleIncludes(projectContext, projectMD5Includes)
 			if (err != nil) != tt.wantErr {
@@ -2372,13 +2372,13 @@ func TestFillModuleIncludes(t *testing.T) {
 func TestCheckDeletedIncludes(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (map[string]ParseContext, map[string]Meta)
+		setup   func() (map[string]parseContext, map[string]meta)
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta) {
+			setup: func() (map[string]parseContext, map[string]meta) {
 				tmpDir, err := os.MkdirTemp("", "test_check_deleted_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2388,8 +2388,8 @@ func TestCheckDeletedIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				projectIncludesDir := filepath.Join(projectDir, "includes")
@@ -2416,11 +2416,11 @@ func TestCheckDeletedIncludes(t *testing.T) {
 					projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 					projectUpPath := filepath.Join(projectDir, projectUpName)
 					includesMap[projectIncludePath] = projectUpPath
-					projectContext[projectUpPath] = ParseContext{
+					projectContext[projectUpPath] = parseContext{
 						Includes: includesMap,
 					}
-					metaMap[projectUpPath] = Meta{
-						MetaInfo: MigrationInfo{
+					metaMap[projectUpPath] = meta{
+						MetaInfo: migrationInfo{
 							Dir: moduleDir,
 						},
 						MD5: "meta",
@@ -2433,7 +2433,7 @@ func TestCheckDeletedIncludes(t *testing.T) {
 		},
 		{
 			name: "missing meta include",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta) {
+			setup: func() (map[string]parseContext, map[string]meta) {
 				tmpDir, err := os.MkdirTemp("", "test_check_deleted_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2443,8 +2443,8 @@ func TestCheckDeletedIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				projectIncludesDir := filepath.Join(projectDir, "includes")
@@ -2468,11 +2468,11 @@ func TestCheckDeletedIncludes(t *testing.T) {
 						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 						projectUpPath := filepath.Join(projectDir, projectUpName)
 						includesMap[projectIncludePath] = projectUpPath
-						projectContext[projectUpPath] = ParseContext{
+						projectContext[projectUpPath] = parseContext{
 							Includes: includesMap,
 						}
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{
 								Dir: moduleDir,
 							},
 							MD5: "meta",
@@ -2491,11 +2491,11 @@ func TestCheckDeletedIncludes(t *testing.T) {
 						projectUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseProjectName, i, i-1)
 						projectUpPath := filepath.Join(projectDir, projectUpName)
 						includesMap[projectIncludePath] = projectUpPath
-						projectContext[projectUpPath] = ParseContext{
+						projectContext[projectUpPath] = parseContext{
 							Includes: includesMap,
 						}
-						metaMap[projectUpPath] = Meta{
-							MetaInfo: MigrationInfo{
+						metaMap[projectUpPath] = meta{
+							MetaInfo: migrationInfo{
 								Dir: moduleDir,
 							},
 							MD5: "meta",
@@ -2511,7 +2511,7 @@ func TestCheckDeletedIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectContext, metaMap := tt.setup(t)
+			projectContext, metaMap := tt.setup()
 
 			rslt, err := checkDeletedIncludes(projectContext, metaMap)
 			if (err != nil) != tt.wantErr {
@@ -2527,13 +2527,13 @@ func TestCheckDeletedIncludes(t *testing.T) {
 func TestCheckMissedIncludes(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) (map[string]ParseContext, map[string]Meta, map[string]ParseContext)
+		setup   func() (map[string]parseContext, map[string]meta, map[string]parseContext)
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta, map[string]ParseContext) {
+			setup: func() (map[string]parseContext, map[string]meta, map[string]parseContext) {
 				tmpDir, err := os.MkdirTemp("", "test_check_missed_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2543,9 +2543,9 @@ func TestCheckMissedIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				moduleContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				moduleContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				projectIncludesDir := filepath.Join(projectDir, "includes")
@@ -2576,14 +2576,14 @@ func TestCheckMissedIncludes(t *testing.T) {
 					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
 					includesProjectMap[projectIncludePath] = projectUpPath
 					includesModuleMap[moduleIncludePath] = moduleUpPath
-					moduleContext[moduleUpPath] = ParseContext{
+					moduleContext[moduleUpPath] = parseContext{
 						Includes: includesModuleMap,
 					}
-					projectContext[projectUpPath] = ParseContext{
+					projectContext[projectUpPath] = parseContext{
 						Includes: includesProjectMap,
 					}
-					metaMap[projectUpPath] = Meta{
-						MetaInfo: MigrationInfo{
+					metaMap[projectUpPath] = meta{
+						MetaInfo: migrationInfo{
 							Dir:        moduleDir,
 							UpFileName: moduleUpName,
 						},
@@ -2597,7 +2597,7 @@ func TestCheckMissedIncludes(t *testing.T) {
 		},
 		{
 			name: "changed includes",
-			setup: func(t *testing.T) (map[string]ParseContext, map[string]Meta, map[string]ParseContext) {
+			setup: func() (map[string]parseContext, map[string]meta, map[string]parseContext) {
 				tmpDir, err := os.MkdirTemp("", "test_check_missed_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2607,9 +2607,9 @@ func TestCheckMissedIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				projectContext := make(map[string]ParseContext)
-				moduleContext := make(map[string]ParseContext)
-				metaMap := make(map[string]Meta)
+				projectContext := make(map[string]parseContext)
+				moduleContext := make(map[string]parseContext)
+				metaMap := make(map[string]meta)
 				projectDir := filepath.Join(tmpDir, "migrations")
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				projectIncludesDir := filepath.Join(projectDir, "includes")
@@ -2640,14 +2640,14 @@ func TestCheckMissedIncludes(t *testing.T) {
 					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
 					includesProjectMap[projectIncludePath] = projectUpPath
 					includesModuleMap[moduleIncludePath] = moduleUpPath
-					moduleContext[moduleUpPath] = ParseContext{
+					moduleContext[moduleUpPath] = parseContext{
 						Includes: includesModuleMap,
 					}
-					projectContext[projectUpPath] = ParseContext{
+					projectContext[projectUpPath] = parseContext{
 						Includes: includesProjectMap,
 					}
-					metaMap[projectUpPath] = Meta{
-						MetaInfo: MigrationInfo{
+					metaMap[projectUpPath] = meta{
+						MetaInfo: migrationInfo{
 							Dir:        moduleDir,
 							UpFileName: moduleUpName,
 						},
@@ -2662,7 +2662,7 @@ func TestCheckMissedIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectContext, metaMap, moduleContext := tt.setup(t)
+			projectContext, metaMap, moduleContext := tt.setup()
 
 			rslt, err := checkMissedIncludes(projectContext, metaMap, moduleContext)
 			if (err != nil) != tt.wantErr {
@@ -2678,14 +2678,14 @@ func TestCheckMissedIncludes(t *testing.T) {
 func TestCheckMissedFilesForIncludes(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T) map[string]MigrationInfo
+		setup          func() map[string]migrationInfo
 		wantIncludeLen int
 		wantWarnLen    int
 		wantErr        bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) map[string]MigrationInfo {
+			setup: func() map[string]migrationInfo {
 				tmpDir, err := os.MkdirTemp("", "test_check_missed_files_for_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2695,7 +2695,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				missedFiles := make(map[string]MigrationInfo)
+				missedFiles := make(map[string]migrationInfo)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				moduleIncludesDir := filepath.Join(moduleDir, "includes")
 				if err := os.MkdirAll(moduleIncludesDir, 0755); err != nil {
@@ -2715,7 +2715,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 					if err := os.WriteFile(moduleUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
 						t.Fatalf("error creating file: %v", err)
 					}
-					missedFiles[moduleUpPath] = MigrationInfo{
+					missedFiles[moduleUpPath] = migrationInfo{
 						Dir:          moduleDir,
 						UpFileName:   moduleUpName,
 						DownFileName: moduleDownName,
@@ -2729,7 +2729,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 		},
 		{
 			name: "deleted includes",
-			setup: func(t *testing.T) map[string]MigrationInfo {
+			setup: func() map[string]migrationInfo {
 				tmpDir, err := os.MkdirTemp("", "test_check_missed_files_for_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2739,7 +2739,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				missedFiles := make(map[string]MigrationInfo)
+				missedFiles := make(map[string]migrationInfo)
 				moduleDir := filepath.Join(tmpDir, "module", "migrations")
 				moduleIncludesDir := filepath.Join(moduleDir, "includes")
 				if err := os.MkdirAll(moduleIncludesDir, 0755); err != nil {
@@ -2756,7 +2756,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 						if err := os.WriteFile(moduleUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
 							t.Fatalf("error creating file: %v", err)
 						}
-						missedFiles[moduleUpPath] = MigrationInfo{
+						missedFiles[moduleUpPath] = migrationInfo{
 							Dir:          moduleDir,
 							UpFileName:   moduleUpName,
 							DownFileName: moduleDownName,
@@ -2773,7 +2773,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 						if err := os.WriteFile(moduleUpPath, []byte(fmt.Sprintf("@includes/%s", includeName)), 0644); err != nil {
 							t.Fatalf("error creating file: %v", err)
 						}
-						missedFiles[moduleUpPath] = MigrationInfo{
+						missedFiles[moduleUpPath] = migrationInfo{
 							Dir:          moduleDir,
 							UpFileName:   moduleUpName,
 							DownFileName: moduleDownName,
@@ -2790,7 +2790,7 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			missedFiles := tt.setup(t)
+			missedFiles := tt.setup()
 
 			warnings, rslt, err := checkMissedFilesForIncludes(missedFiles)
 			includesLen := 0
@@ -2813,13 +2813,13 @@ func TestCheckMissedFilesForIncludes(t *testing.T) {
 func TestProcessMissedFilesIncludes(t *testing.T) {
 	tests := []struct {
 		name           string
-		setup          func(t *testing.T) (map[string]string, map[string]string, map[string]map[string]string)
+		setup          func() (map[string]string, map[string]string, map[string]map[string]string)
 		wantIncludeLen int
 		wantErr        bool
 	}{
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]string, map[string]string, map[string]map[string]string) {
+			setup: func() (map[string]string, map[string]string, map[string]map[string]string) {
 				tmpDir, err := os.MkdirTemp("", "test_process_missed_files_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2856,7 +2856,7 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 					}
 					moduleUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
-					md5, err := FileMD5(projectIncludePath)
+					md5, err := fileMD5(projectIncludePath)
 					if err != nil {
 						t.Fatalf("error calculating md5 of an include file: %v", err)
 					}
@@ -2873,7 +2873,7 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 		},
 		{
 			name: "normal behaviour",
-			setup: func(t *testing.T) (map[string]string, map[string]string, map[string]map[string]string) {
+			setup: func() (map[string]string, map[string]string, map[string]map[string]string) {
 				tmpDir, err := os.MkdirTemp("", "test_process_missed_files_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2910,7 +2910,7 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 					}
 					moduleUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
-					md5, err := FileMD5(projectIncludePath)
+					md5, err := fileMD5(projectIncludePath)
 					if err != nil {
 						t.Fatalf("error calculating md5 of an include file: %v", err)
 					}
@@ -2926,7 +2926,7 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 		},
 		{
 			name: "nonexistent include",
-			setup: func(t *testing.T) (map[string]string, map[string]string, map[string]map[string]string) {
+			setup: func() (map[string]string, map[string]string, map[string]map[string]string) {
 				tmpDir, err := os.MkdirTemp("", "test_process_missed_files_includes_*")
 				if err != nil {
 					t.Errorf("failed to created dir: %v", err)
@@ -2960,7 +2960,7 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 					}
 					moduleUpName := fmt.Sprintf("%s-%d-%d.up.sql", baseModuleName, i, i-1)
 					moduleUpPath := filepath.Join(moduleDir, moduleUpName)
-					md5, err := FileMD5(projectIncludePath)
+					md5, err := fileMD5(projectIncludePath)
 					if err != nil {
 						t.Fatalf("error calculating md5 of an include file: %v", err)
 					}
@@ -2978,14 +2978,14 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			projectMD5Includes, missedIncludes, newMissedIncludes := tt.setup(t)
+			projectMD5Includes, missedIncludes, newMissedIncludes := tt.setup()
 
 			rslt, err := processMissedFilesIncludes(projectMD5Includes, missedIncludes, newMissedIncludes)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("checkMissedFilesForIncludes() err = %v, want %v", err, tt.wantErr)
+				t.Errorf("processMissedFilesIncludes() err = %v, want %v", err, tt.wantErr)
 			}
 			if len(rslt) != tt.wantIncludeLen {
-				t.Errorf("checkMissedFilesForIncludes() found = %v, want %v", len(rslt), tt.wantIncludeLen)
+				t.Errorf("processMissedFilesIncludes() found = %v, want %v", len(rslt), tt.wantIncludeLen)
 			}
 		})
 	}
@@ -2994,13 +2994,13 @@ func TestProcessMissedFilesIncludes(t *testing.T) {
 func TestGetEntriesProjectMap(t *testing.T) {
 	tests := []struct {
 		name         string
-		setup        func(t *testing.T) fs.FS
+		setup        func() fs.FS
 		wantEntryLen int
 		wantErr      bool
 	}{
 		{
 			name: "normal",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				projectDir, err := os.MkdirTemp("", "test_get_entries_project_map_*")
 				if err != nil {
 					t.Fatalf("failed to create dir: %v", err)
@@ -3033,7 +3033,7 @@ func TestGetEntriesProjectMap(t *testing.T) {
 		},
 		{
 			name: "wrong format",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				projectDir, err := os.MkdirTemp("", "test_get_entries_project_map_*")
 				if err != nil {
 					t.Fatalf("failed to create dir: %v", err)
@@ -3066,7 +3066,7 @@ func TestGetEntriesProjectMap(t *testing.T) {
 		},
 		{
 			name: "fsys check",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				fsys := fstest.MapFS{
 					"proj1.txt":  {Data: []byte{}},
 					"proj2.txt":  {Data: []byte{}},
@@ -3080,7 +3080,7 @@ func TestGetEntriesProjectMap(t *testing.T) {
 		},
 		{
 			name: "fsys check2",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				fsys := make(fstest.MapFS)
 				wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
@@ -3109,7 +3109,7 @@ func TestGetEntriesProjectMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fsys := tt.setup(t)
+			fsys := tt.setup()
 
 			resultMap, err := getEntriesProjectMap(fsys, ".")
 			if (err != nil) != tt.wantErr {
@@ -3126,13 +3126,13 @@ func TestGetEntriesProjectMap(t *testing.T) {
 func TestGetEntriesModuleMap(t *testing.T) {
 	tests := []struct {
 		name         string
-		setup        func(t *testing.T) fs.FS
+		setup        func() fs.FS
 		wantEntryLen int
 		wantErr      bool
 	}{
 		{
 			name: "fsys check",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				fsys := fstest.MapFS{
 					".gitmodules":           {Data: []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module")},
 					"migrations/proj1.txt":  {Data: []byte{}},
@@ -3147,7 +3147,7 @@ func TestGetEntriesModuleMap(t *testing.T) {
 		},
 		{
 			name: "fsys check2",
-			setup: func(t *testing.T) fs.FS {
+			setup: func() fs.FS {
 				fsys := make(fstest.MapFS)
 				wrongProjectName := "1test23"
 				baseProjectName := "test-project-0.1.0"
@@ -3178,7 +3178,7 @@ func TestGetEntriesModuleMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fsys := tt.setup(t)
+			fsys := tt.setup()
 
 			resultMap, err := getEntriesModuleMap(fsys, ".")
 			if (err != nil) != tt.wantErr {

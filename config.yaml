@@ -1,6 +1,3 @@
-app:
-  conc_limit: 8 
-
 help:
   include: true
 

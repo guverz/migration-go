@@ -9,19 +9,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	IncludePattern     = regexp.MustCompile(`^@([^;]+)`)
-	MigrationUpPattern = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
-	MigrationPattern   = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+)$`)
+	includePattern     = regexp.MustCompile(`^@([^;]+)`)
+	migrationUpPattern = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.up\.([^\.]+)$`)
+	migrationPattern   = regexp.MustCompile(`(.+\-[0-9\.\-]+)\.(up|down)\.([^\.]+)$`)
 )
 
-// ListResults struct stores errors regarding to migration directory and saves important information that can be used to fix some of those errors.
-type ListResults struct {
+// listResults struct stores errors regarding to migration directory and saves important information that can be used to fix some of those errors.
+type listResults struct {
 	ListWarnings []string // list of non-critical errors
 
 	LostPairs       map[string]string        // key - missed migration file, value - existing pair
@@ -29,16 +28,16 @@ type ListResults struct {
 	DeletedFiles    map[string]string        // key - project migration, value - module migration (module file is missing)
 	DeletedIncludes map[string]string        // key - include, value - included (include is being included; included includes)
 	MissedIncludes  map[string]string        // key - include, value - included
-	MissedFiles     map[string]MigrationInfo // key - upName of module file, value - MigrationInfo of that module file
+	MissedFiles     map[string]migrationInfo // key - upName of module file, value - MigrationInfo of that module file
 
-	ProjectMigrations map[string]MigrationInfo // key - MD5, value - MigrationInfo of any original migration pair (map of original migration files (have no meta))
-	ModuleMigrations  map[string]MigrationInfo // key - prefix of original migration file, value - MigrationInfo of migration file that references original
+	ProjectMigrations map[string]migrationInfo // key - MD5, value - MigrationInfo of any original migration pair (map of original migration files (have no meta))
+	ModuleMigrations  map[string]migrationInfo // key - prefix of original migration file, value - MigrationInfo of migration file that references original
 	ProjectIncludes   map[string]string        // key - include, value - included; include of project migration file (migration file has no meta)
 	ModuleIncludes    map[string]string        // key - include, value - included; include of module migration file
 }
 
 // MigrationInfo struct is
-type MigrationInfo struct {
+type migrationInfo struct {
 	Prefix       string
 	Ext          string
 	Dir          string
@@ -47,16 +46,84 @@ type MigrationInfo struct {
 }
 
 // Meta struct is used solely for project migration files.
-type Meta struct {
-	MetaInfo MigrationInfo
+type meta struct {
+	MetaInfo migrationInfo
 	MD5      string
 }
 
-// MigrationList checks migration and submodule directories for errors.
-// Those errors are being added to ListResults struct.
-func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
-	t1 := time.Now()
-	rslts := &ListResults{}
+func Check() error {
+	collect := false
+	fsys := os.DirFS(".")
+
+	rslt, err := migrationList(fsys, MigrationDir)
+	if err != nil {
+		return fmt.Errorf("migrationList failed: %w", err)
+	}
+	for _, error := range rslt.ListWarnings {
+		collect = true
+		lw(error)
+	}
+	if len(rslt.LostPairs) != 0 {
+		le(fmt.Sprintf("there is number of incomplete pairs (%d), need to fix it by hand:", len(rslt.LostPairs)))
+		for missed, existing := range rslt.LostPairs {
+			le(fmt.Sprintf("file %s do not have counterpart %s", existing, missed))
+		}
+	}
+	if len(rslt.MissedFiles) != 0 {
+		lw(fmt.Sprintf("there are unregistered migration files (%d), collect them and commit:", len(rslt.MissedFiles)))
+		collect = true
+		for file := range rslt.MissedFiles {
+			fmt.Printf("\t%s\n", file)
+		}
+	}
+	if len(rslt.MissedIncludes) != 0 {
+		lw(fmt.Sprintf("there is number of unregistered include files (%d), collect them and commit:", len(rslt.MissedIncludes)))
+		collect = true
+		for include, included := range rslt.MissedIncludes {
+			fmt.Printf("\tinclude %s included by %s\n", include, included)
+		}
+	}
+	if len(rslt.MissedPairs) != 0 {
+		lw(fmt.Sprintf("there is number of incomplete pairs (%d), collect them and commit:", len(rslt.MissedPairs)))
+		collect = true
+		for missed, existing := range rslt.MissedPairs {
+			fmt.Printf("\tfile %s do not have counterpart %s\n", existing, missed)
+		}
+	}
+	if len(rslt.DeletedIncludes) != 0 {
+		lw(fmt.Sprintf("there is number of obsolete includes (%d), collect them and commit:", len(rslt.DeletedIncludes)))
+		collect = true
+		for include, included := range rslt.DeletedIncludes {
+			fmt.Printf("\tinclude %s included by %s\n", include, included)
+		}
+	}
+	if len(rslt.DeletedFiles) != 0 {
+		lw(fmt.Sprintf("there is number of obsolete migration files (%d), collect them and commit:", len(rslt.DeletedFiles)))
+		collect = true
+		for project, module := range rslt.DeletedFiles {
+			fmt.Printf("\tmigration file %s missing original file %s\n", project, module)
+		}
+	}
+
+	switch {
+	case collect:
+		return fmt.Errorf("use collect command")
+		// fmt.Println("do: scripts/migration collect")
+	case len(rslt.LostPairs) != 0:
+		return fmt.Errorf("only lost pairs left, fix it by hand")
+	default:
+		fmt.Printf("%s: No errors!\n",
+			colorize("[OK]", green),
+		)
+	}
+
+	return nil
+}
+
+// migrationList checks migration and submodule directories for errors.
+// Those errors are being added to listResults struct.
+func migrationList(fsys fs.FS, dir string) (*listResults, error) {
+	rslts := &listResults{}
 	rslts.MissedPairs = make(map[string]string)
 	rslts.LostPairs = make(map[string]string)
 	dir = filepath.ToSlash(filepath.Clean(dir))
@@ -90,12 +157,12 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 
 	// getting map where key - project file, value - migration info of meta file (if md5 is an empty string then that project file is an original one)
 	var (
-		MetaMap   map[string]Meta
-		ModuleMap map[string]MigrationInfo
+		MetaMap   map[string]meta
+		ModuleMap map[string]migrationInfo
 	)
 	g = new(errgroup.Group)
 	g.Go(func() error {
-		metaMap, localErr := GetMetaMap(fsys, projectEntriesMap)
+		metaMap, localErr := getMetaMap(fsys, projectEntriesMap)
 		if localErr != nil {
 			return fmt.Errorf("error getting map of projects: %w", localErr)
 		}
@@ -104,7 +171,7 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	})
 	// getting map where key - concat md5, value - migration info of module file (only files with complete pairs)
 	g.Go(func() error {
-		moduleMap, localErr := GetModuleMap(moduleEntriesMap)
+		moduleMap, localErr := getModuleMap(moduleEntriesMap)
 		if localErr != nil {
 			return fmt.Errorf("error getting map of modules: %w", localErr)
 		}
@@ -114,7 +181,6 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-
 	// FILLING IN MIGRATION FILE RELATED FIELDS OF LISTRESULTS STRUCT
 
 	// ProjectMigrations, ModuleMigrations and DeletedFiles
@@ -190,9 +256,9 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 
 	// filling in ParseContext for project, module and meta
 	var (
-		mapProjectIncludes map[string]ParseContext
-		mapModuleIncludes  map[string]ParseContext
-		mapMetaIncludes    map[string]ParseContext
+		mapProjectIncludes map[string]parseContext
+		mapModuleIncludes  map[string]parseContext
+		mapMetaIncludes    map[string]parseContext
 	)
 	g = new(errgroup.Group)
 	g.Go(func() error {
@@ -223,7 +289,7 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 		return nil, err
 	}
 
-	// ProjectMD5Includes map[string]string        // key - MD5, value - include; md5 of includes used in the project directory (used to be in ListResults)
+	// ProjectMD5Includes map[string]string        // key - MD5, value - include; md5 of includes used in the project directory (used to be in listResults)
 	var ProjectMD5Includes map[string]string
 
 	// FILLING IN INCLUDES RELATED FIELDS OF LISTRESULTS STRUCT
@@ -278,17 +344,17 @@ func MigrationList(fsys fs.FS, dir string) (*ListResults, error) {
 		return nil, fmt.Errorf("error processing includes from MissedFiles: %w", err)
 	}
 	maps.Copy(rslts.MissedIncludes, missedIncludes)
-	fmt.Println(time.Since(t1))
+
 	return rslts, nil
 }
 
-func processMissingProjectPairs(missingProjectPairs map[string]string, metaMap map[string]Meta) (map[string]string, map[string]string) {
+func processMissingProjectPairs(missingProjectPairs map[string]string, metaMap map[string]meta) (map[string]string, map[string]string) {
 	lostPairs := make(map[string]string)
 	missedPairs := make(map[string]string)
 
 	for missing, existing := range missingProjectPairs {
 		meta := metaMap[existing]
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			lostPairs[missing] = existing
 		} else {
 			missedPairs[missing] = existing
@@ -301,7 +367,7 @@ func processMissedFilesIncludes(projectMD5Includes map[string]string, foundMisse
 	newMissedIncludes := make(map[string]string)
 	for _, missedFileIncludes := range missedFilesIncludesMap {
 		for include, included := range missedFileIncludes {
-			md5, err := FileMD5(include)
+			md5, err := fileMD5(include)
 			if err != nil {
 				return nil, fmt.Errorf("error calculating MD5 of include: %w", err)
 			}
@@ -317,7 +383,7 @@ func processMissedFilesIncludes(projectMD5Includes map[string]string, foundMisse
 	return newMissedIncludes, nil
 }
 
-func checkMissedFilesForIncludes(missedFiles map[string]MigrationInfo) ([]string, map[string]map[string]string, error) {
+func checkMissedFilesForIncludes(missedFiles map[string]migrationInfo) ([]string, map[string]map[string]string, error) {
 	warnings := []string{}
 	newMissedIncludes := make(map[string]map[string]string)
 	for file, moduleInfo := range missedFiles {
@@ -325,14 +391,14 @@ func checkMissedFilesForIncludes(missedFiles map[string]MigrationInfo) ([]string
 		if !isUp {
 			continue
 		}
-		missedContext := NewParseContext()
+		missedContext := newParseContext()
 		missedUpPath := filepath.Join(moduleInfo.Dir, moduleInfo.UpFileName)
 		missedDownPath := filepath.Join(moduleInfo.Dir, moduleInfo.DownFileName)
-		if err := ParseIncludes(missedContext, missedUpPath, ""); err != nil {
-			return nil, nil, fmt.Errorf("error ParseIncludes: %w", err)
+		if err := parseIncludes(missedContext, missedUpPath, ""); err != nil {
+			return nil, nil, fmt.Errorf("error parseIncludes: %w", err)
 		}
-		if err := ParseIncludes(missedContext, missedDownPath, ""); err != nil {
-			return nil, nil, fmt.Errorf("error ParseIncludes: %w", err)
+		if err := parseIncludes(missedContext, missedDownPath, ""); err != nil {
+			return nil, nil, fmt.Errorf("error parseIncludes: %w", err)
 		}
 		for include, included := range missedContext.MissingFiles {
 			warnings = append(warnings, fmt.Sprintf("include file %s is missing in the module and it's being included by %s, need to fix it by hand", include, included))
@@ -342,12 +408,12 @@ func checkMissedFilesForIncludes(missedFiles map[string]MigrationInfo) ([]string
 	return warnings, newMissedIncludes, nil
 }
 
-func checkDeletedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map[string]Meta) (map[string]string, error) {
+func checkDeletedIncludes(mapProjectIncludes map[string]parseContext, metaMap map[string]meta) (map[string]string, error) {
 	deletedIncludes := make(map[string]string)
 	for upPath, projectContext := range mapProjectIncludes {
 		meta := metaMap[upPath]
 		dir := filepath.Dir(upPath)
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			continue
 		}
 		for projectInclude, projectIncluded := range projectContext.Includes {
@@ -356,7 +422,7 @@ func checkDeletedIncludes(mapProjectIncludes map[string]ParseContext, metaMap ma
 				return nil, fmt.Errorf("error getting relative path: %w", err)
 			}
 			metaIncludePath := filepath.Join(meta.MetaInfo.Dir, includeDir)
-			if rslt, err := FindFileViaDir(metaIncludePath); err != nil {
+			if rslt, err := findFileViaDir(metaIncludePath); err != nil {
 				return nil, fmt.Errorf("findFileViaDir error: %w", err)
 			} else if !rslt {
 				deletedIncludes[projectInclude] = projectIncluded
@@ -366,16 +432,16 @@ func checkDeletedIncludes(mapProjectIncludes map[string]ParseContext, metaMap ma
 	return deletedIncludes, nil
 }
 
-func checkMissedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map[string]Meta, mapModuleIncludes map[string]ParseContext) (map[string]string, error) {
+func checkMissedIncludes(mapProjectIncludes map[string]parseContext, metaMap map[string]meta, mapModuleIncludes map[string]parseContext) (map[string]string, error) {
 	missedIncludes := make(map[string]string)
 	for upFile, projectContext := range mapProjectIncludes {
 		meta := metaMap[upFile]
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			continue
 		}
 		migrationMD5Includes := make(map[string]string)
 		for projectInclude := range projectContext.Includes {
-			md5, err := FileMD5(projectInclude)
+			md5, err := fileMD5(projectInclude)
 			if err != nil {
 				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
 			}
@@ -385,7 +451,7 @@ func checkMissedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map
 		moduleContext := mapModuleIncludes[moduleUpPath]
 
 		for metaInclude, metaIncluded := range moduleContext.Includes {
-			metaMD5, err := FileMD5(metaInclude)
+			metaMD5, err := fileMD5(metaInclude)
 			if err != nil {
 				return nil, fmt.Errorf("error getting md5 of an include file: %w", err)
 			}
@@ -397,11 +463,11 @@ func checkMissedIncludes(mapProjectIncludes map[string]ParseContext, metaMap map
 	return missedIncludes, nil
 }
 
-func fillModuleMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, error) {
-	moduleMigrations := make(map[string]MigrationInfo)
+func fillModuleMigrations(metaMap map[string]meta) (map[string]migrationInfo, error) {
+	moduleMigrations := make(map[string]migrationInfo)
 	for file, meta := range metaMap {
 		isUp := strings.HasSuffix(file, ".up.sql")
-		if !isUp || meta.IsOriginal() {
+		if !isUp || meta.isOriginal() {
 			continue
 		}
 		projectInfo, err := getProjectInfo(file)
@@ -413,7 +479,7 @@ func fillModuleMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, er
 	return moduleMigrations, nil
 }
 
-func getProjectInfo(projectPath string) (MigrationInfo, error) {
+func getProjectInfo(projectPath string) (migrationInfo, error) {
 	var (
 		prefix   string
 		ext      string
@@ -422,15 +488,15 @@ func getProjectInfo(projectPath string) (MigrationInfo, error) {
 		downName string
 	)
 	dir = filepath.Dir(projectPath)
-	matches := MigrationUpPattern.FindStringSubmatch(filepath.Base(projectPath))
+	matches := migrationUpPattern.FindStringSubmatch(filepath.Base(projectPath))
 	if matches == nil {
-		return MigrationInfo{}, fmt.Errorf("wrong file name: %s", filepath.Base(projectPath))
+		return migrationInfo{}, fmt.Errorf("wrong file name: %s", filepath.Base(projectPath))
 	}
 	prefix, ext = matches[1], matches[2]
 	upName = prefix + ".up." + ext
 	downName = prefix + ".down." + ext
 
-	return MigrationInfo{
+	return migrationInfo{
 		Prefix:       prefix,
 		Ext:          ext,
 		Dir:          dir,
@@ -439,16 +505,16 @@ func getProjectInfo(projectPath string) (MigrationInfo, error) {
 	}, nil
 }
 
-func fillProjectMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, error) {
-	projectMigrations := make(map[string]MigrationInfo)
+func fillProjectMigrations(metaMap map[string]meta) (map[string]migrationInfo, error) {
+	projectMigrations := make(map[string]migrationInfo)
 	for file, meta := range metaMap {
 		fileName := filepath.Base(file)
-		matches := MigrationUpPattern.FindStringSubmatch(fileName)
+		matches := migrationUpPattern.FindStringSubmatch(fileName)
 		if matches == nil {
 			continue
 		}
 		// if meta.IsEmpty == true then that file has no meta, therefore migrationInfo needs to be calculated
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			prefix, ext := matches[1], matches[2]
 			dir := filepath.Dir(file)
 			upName := prefix + ".up." + ext
@@ -456,7 +522,7 @@ func fillProjectMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, e
 			upPath := filepath.Join(dir, upName)
 			downPath := filepath.Join(dir, downName)
 
-			md5, err := ConcatMD5(upPath, downPath)
+			md5, err := concatMD5(upPath, downPath)
 			if err != nil {
 				return nil, fmt.Errorf("error getting concat of MD5: %w", err)
 			}
@@ -464,7 +530,7 @@ func fillProjectMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, e
 			if md5 == "" {
 				continue
 			}
-			projectMigrations[md5] = MigrationInfo{
+			projectMigrations[md5] = migrationInfo{
 				Prefix:       prefix,
 				Ext:          ext,
 				Dir:          dir,
@@ -478,23 +544,23 @@ func fillProjectMigrations(metaMap map[string]Meta) (map[string]MigrationInfo, e
 	return projectMigrations, nil
 }
 
-func fillProjectIncludes(projectContextMap map[string]ParseContext, metaMap map[string]Meta) map[string]string {
+func fillProjectIncludes(projectContextMap map[string]parseContext, metaMap map[string]meta) map[string]string {
 	projectIncludes := make(map[string]string)
 	for upFile, projectContext := range projectContextMap {
 		meta := metaMap[upFile]
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			maps.Copy(projectIncludes, projectContext.Includes)
 		}
 	}
 	return projectIncludes
 }
 
-// filling ListResults field - ModuleIncludes
-func fillModuleIncludes(metaContextMap map[string]ParseContext, projectMD5Includes map[string]string) (map[string]string, error) {
+// filling listResults field - ModuleIncludes
+func fillModuleIncludes(metaContextMap map[string]parseContext, projectMD5Includes map[string]string) (map[string]string, error) {
 	moduleIncludes := make(map[string]string)
 	for _, MetaContext := range metaContextMap {
 		for include, included := range MetaContext.Includes {
-			md5, err := FileMD5(include)
+			md5, err := fileMD5(include)
 			if err != nil {
 				return nil, fmt.Errorf("error calculating md5 of include: %w", err)
 			}
@@ -506,11 +572,11 @@ func fillModuleIncludes(metaContextMap map[string]ParseContext, projectMD5Includ
 	return moduleIncludes, nil
 }
 
-func getProjectMD5Includes(projectContextMap map[string]ParseContext) (map[string]string, error) {
+func getProjectMD5Includes(projectContextMap map[string]parseContext) (map[string]string, error) {
 	projectMD5Includes := make(map[string]string)
 	for _, ProjectContext := range projectContextMap {
 		for include := range ProjectContext.Includes {
-			md5, err := FileMD5(include)
+			md5, err := fileMD5(include)
 			if err != nil {
 				return nil, fmt.Errorf("error calculating md5 of include: %w", err)
 			}
@@ -520,22 +586,22 @@ func getProjectMD5Includes(projectContextMap map[string]ParseContext) (map[strin
 	return projectMD5Includes, nil
 }
 
-func getMapParseContext(entriesMap map[string]struct{}) (map[string]ParseContext, error) {
-	entryParseContext := make(map[string]ParseContext)
+func getMapParseContext(entriesMap map[string]struct{}) (map[string]parseContext, error) {
+	entryParseContext := make(map[string]parseContext)
 	for upFile := range entriesMap {
-		entryContext := NewParseContext()
+		entryContext := newParseContext()
 		isUp := strings.HasSuffix(upFile, ".up.sql")
 		if !isUp {
 			continue
 		}
-		downFile, err := SwitchMigrationType(upFile, "down")
+		downFile, err := switchMigrationType(upFile, "down")
 		if err != nil {
 			return nil, fmt.Errorf("error switching migration type to down: %w", err)
 		}
-		if err := ParseIncludes(entryContext, upFile, ""); err != nil {
+		if err := parseIncludes(entryContext, upFile, ""); err != nil {
 			return nil, fmt.Errorf("error parsing migration file (up) for includes: %w", err)
 		}
-		if err := ParseIncludes(entryContext, downFile, ""); err != nil {
+		if err := parseIncludes(entryContext, downFile, ""); err != nil {
 			return nil, fmt.Errorf("error parsing migration file (down) for includes: %w", err)
 		}
 		entryParseContext[upFile] = *entryContext
@@ -543,20 +609,20 @@ func getMapParseContext(entriesMap map[string]struct{}) (map[string]ParseContext
 	return entryParseContext, nil
 }
 
-func getMetaParseContext(metaMap map[string]Meta) (map[string]ParseContext, error) {
-	metaParseContext := make(map[string]ParseContext)
+func getMetaParseContext(metaMap map[string]meta) (map[string]parseContext, error) {
+	metaParseContext := make(map[string]parseContext)
 	for upFile, meta := range metaMap {
-		metaContext := NewParseContext()
+		metaContext := newParseContext()
 		isUp := strings.HasSuffix(upFile, ".up.sql")
-		if !isUp || meta.IsOriginal() {
+		if !isUp || meta.isOriginal() {
 			continue
 		}
 		upPath := filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.UpFileName)
 		downPath := filepath.Join(meta.MetaInfo.Dir, meta.MetaInfo.DownFileName)
-		if err := ParseIncludes(metaContext, upPath, ""); err != nil {
+		if err := parseIncludes(metaContext, upPath, ""); err != nil {
 			return nil, fmt.Errorf("error parsing meta (up) for includes: %w, file: %s", err, upPath)
 		}
-		if err := ParseIncludes(metaContext, downPath, ""); err != nil {
+		if err := parseIncludes(metaContext, downPath, ""); err != nil {
 			return nil, fmt.Errorf("error parsing meta (down) for includes: %w, file: %s", err, downPath)
 		}
 		metaParseContext[upFile] = *metaContext
@@ -565,7 +631,7 @@ func getMetaParseContext(metaMap map[string]Meta) (map[string]ParseContext, erro
 }
 
 // SwitchMigrationType return changed filename with newDirection.
-func SwitchMigrationType(filename, newDirection string) (string, error) {
+func switchMigrationType(filename, newDirection string) (string, error) {
 	parts := strings.Split(filename, ".")
 	if len(parts) < 3 {
 		return "", fmt.Errorf("filename is wrong format: %s", filename)
@@ -586,7 +652,7 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 		case isUp:
 			entryName := filepath.Base(entryPath)
 			entryDir := filepath.Dir(entryPath)
-			downName, err := SwitchMigrationType(entryName, "down")
+			downName, err := switchMigrationType(entryName, "down")
 			if err != nil {
 				return nil, fmt.Errorf("error switching migration type to down: %w", err)
 			}
@@ -597,7 +663,7 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 		case isDown:
 			entryName := filepath.Base(entryPath)
 			entryDir := filepath.Dir(entryPath)
-			upName, err := SwitchMigrationType(entryName, "up")
+			upName, err := switchMigrationType(entryName, "up")
 			if err != nil {
 				return nil, fmt.Errorf("error switching migration type to up: %w", err)
 			}
@@ -612,8 +678,8 @@ func checkPairs(projectMap map[string]struct{}) (map[string]string, error) {
 	return incompletePairs, nil
 }
 
-func checkMissedFiles(projectMigrations map[string]MigrationInfo, moduleMap map[string]MigrationInfo) map[string]MigrationInfo {
-	missedFiles := make(map[string]MigrationInfo)
+func checkMissedFiles(projectMigrations map[string]migrationInfo, moduleMap map[string]migrationInfo) map[string]migrationInfo {
+	missedFiles := make(map[string]migrationInfo)
 	for md5, moduleInfo := range moduleMap {
 		if _, exists := projectMigrations[md5]; !exists {
 			missedFiles[moduleInfo.UpFileName] = moduleInfo
@@ -623,14 +689,14 @@ func checkMissedFiles(projectMigrations map[string]MigrationInfo, moduleMap map[
 	return missedFiles
 }
 
-func checkDeletedFiles(metaMap map[string]Meta, moduleMap map[string]struct{}) (map[string]string, error) {
+func checkDeletedFiles(metaMap map[string]meta, moduleMap map[string]struct{}) (map[string]string, error) {
 	deletedFiles := make(map[string]string)
 	for projectPath, meta := range metaMap {
-		matches := MigrationUpPattern.FindStringSubmatch(filepath.Base(projectPath))
+		matches := migrationUpPattern.FindStringSubmatch(filepath.Base(projectPath))
 		if matches == nil {
 			continue
 		}
-		if meta.IsOriginal() {
+		if meta.isOriginal() {
 			continue
 		}
 		dir := filepath.Dir(projectPath)
@@ -651,11 +717,11 @@ func checkDeletedFiles(metaMap map[string]Meta, moduleMap map[string]struct{}) (
 	return deletedFiles, nil
 }
 
-// GetModuleMap returns the map of module files, where key - concatenated md5 of module migration pair and value - MigrationInfo struct.
-func GetModuleMap(moduleEntriesMap map[string]struct{}) (map[string]MigrationInfo, error) {
-	moduleMap := make(map[string]MigrationInfo)
+// GetModuleMap returns the map of module files, where key - concatenated md5 of module migration pair and value - migrationInfo struct.
+func getModuleMap(moduleEntriesMap map[string]struct{}) (map[string]migrationInfo, error) {
+	moduleMap := make(map[string]migrationInfo)
 	for entry := range moduleEntriesMap {
-		moduleInfo, md5, err := GetModule(entry)
+		moduleInfo, md5, err := getModule(entry)
 		if err != nil {
 			return nil, fmt.Errorf("error getting module info: %w", err)
 		}
@@ -669,13 +735,13 @@ func GetModuleMap(moduleEntriesMap map[string]struct{}) (map[string]MigrationInf
 }
 
 // GetModule reads file name and if it fits MigrationPattern then MD5 of migration pair is being calculated.
-// The function returns MigrationInfo struct and MD5 of that migration pair.
-func GetModule(entry string) (MigrationInfo, string, error) {
+// The function returns migrationInfo struct and MD5 of that migration pair.
+func getModule(entry string) (migrationInfo, string, error) {
 	dir := filepath.Dir(entry)
 	entryName := filepath.Base(entry)
-	matches := MigrationPattern.FindStringSubmatch(entryName)
+	matches := migrationPattern.FindStringSubmatch(entryName)
 	if matches == nil {
-		return MigrationInfo{}, "", fmt.Errorf("wrong name of module migration %s", entryName)
+		return migrationInfo{}, "", fmt.Errorf("wrong name of module migration %s", entryName)
 	}
 
 	prefix, ext := matches[1], matches[3]
@@ -685,11 +751,11 @@ func GetModule(entry string) (MigrationInfo, string, error) {
 	upPath := filepath.Join(dir, upName)
 	downPath := filepath.Join(dir, downName)
 
-	md5, err := ConcatMD5(upPath, downPath)
+	md5, err := concatMD5(upPath, downPath)
 	if err != nil {
-		return MigrationInfo{}, "", fmt.Errorf("error getting concat of MD5: %w", err)
+		return migrationInfo{}, "", fmt.Errorf("error getting concat of MD5: %w", err)
 	}
-	return MigrationInfo{
+	return migrationInfo{
 		Prefix:       prefix,
 		Ext:          ext,
 		Dir:          dir,
@@ -698,16 +764,16 @@ func GetModule(entry string) (MigrationInfo, string, error) {
 	}, md5, nil
 }
 
-// ConcatMD5 is used to both calculate and concatenate migration pair.
-func ConcatMD5(upPath, downPath string) (string, error) {
-	md5Up, err := FileMD5(upPath)
+// concatMD5 is used to both calculate and concatenate migration pair.
+func concatMD5(upPath, downPath string) (string, error) {
+	md5Up, err := fileMD5(upPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
 		return "", fmt.Errorf("FileMD5 error: %w", err)
 	}
-	md5Down, err := FileMD5(downPath)
+	md5Down, err := fileMD5(downPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -719,15 +785,15 @@ func ConcatMD5(upPath, downPath string) (string, error) {
 }
 
 // IsOriginal is being used to differentiate files that have meta or do not.
-func (m Meta) IsOriginal() bool {
+func (m meta) isOriginal() bool {
 	return m.MD5 == ""
 }
 
-// GetMetaMap reads projectEntryMap and sends every file's path to getMetaInfo to get MigrationInfo.
+// getMetaMap reads projectEntryMap and sends every file's path to getMetaInfo to get migrationInfo.
 // The result is a map where key - file name and value - meta information that's being stored in Meta struct.
-// If MigrationInfo field MD5 is empty string, then this file has no meta.
-func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, error) {
-	metaMap := make(map[string]Meta)
+// If migrationInfo field MD5 is empty string, then this file has no meta.
+func getMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]meta, error) {
+	metaMap := make(map[string]meta)
 	for projectPath := range projectMap {
 		// fsys works with pathes where separator is '/'
 		projectPathTemp := filepath.ToSlash(projectPath)
@@ -735,7 +801,7 @@ func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, er
 		if err != nil {
 			return nil, fmt.Errorf("error getting project: %w", err)
 		}
-		metaMap[projectPath] = Meta{
+		metaMap[projectPath] = meta{
 			MetaInfo: metaEntry,
 			MD5:      md5,
 		}
@@ -744,7 +810,7 @@ func GetMetaMap(fsys fs.FS, projectMap map[string]struct{}) (map[string]Meta, er
 }
 
 // getMetaInfo opens file and reads it to find line that starts with "#migration:". Then this line is being used to return filled MigrationInfo struct.
-func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) {
+func getMetaInfo(fsys fs.FS, projectPath string) (migrationInfo, string, error) {
 	var (
 		prefix   string
 		ext      string
@@ -756,7 +822,7 @@ func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) 
 	projectDir := filepath.Dir(projectPath)
 	file, err := fsys.Open(projectPath)
 	if err != nil {
-		return MigrationInfo{}, "", fmt.Errorf("error opening file: %w", err)
+		return migrationInfo{}, "", fmt.Errorf("error opening file: %w", err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil && err == nil {
@@ -772,7 +838,7 @@ func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) 
 			meta = strings.TrimSpace(meta)
 			parts := strings.SplitN(meta, ";", 2)
 			if len(parts) != 2 {
-				return MigrationInfo{}, "", fmt.Errorf("wrong meta field: %s", meta)
+				return migrationInfo{}, "", fmt.Errorf("wrong meta field: %s", meta)
 			}
 			relPathFileName := parts[0]
 			metaMD5 = parts[1]
@@ -780,9 +846,9 @@ func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) 
 			fileName := filepath.Base(relPathFileName)
 			path = filepath.Join(filepath.Dir(projectDir), filepath.Dir(relPathFileName))
 			// check for meta in the migration file
-			matches := MigrationPattern.FindStringSubmatch(fileName)
+			matches := migrationPattern.FindStringSubmatch(fileName)
 			if matches == nil {
-				return MigrationInfo{}, "", fmt.Errorf("wrong migration name: %s", fileName)
+				return migrationInfo{}, "", fmt.Errorf("wrong migration name: %s", fileName)
 			}
 			prefix = matches[1]
 			ext = matches[3]
@@ -792,9 +858,9 @@ func getMetaInfo(fsys fs.FS, projectPath string) (MigrationInfo, string, error) 
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return MigrationInfo{}, "", fmt.Errorf("scanner error: %w", err)
+		return migrationInfo{}, "", fmt.Errorf("scanner error: %w", err)
 	}
-	return MigrationInfo{
+	return migrationInfo{
 		Prefix:       prefix,
 		Ext:          ext,
 		Dir:          path,
@@ -808,11 +874,11 @@ var (
 	done     = 2
 )
 
-// ParseContext struct is used by ParseIncludes function.
+// ParseContext struct is used by parseIncludes function.
 // State field is used to check for Include Loops. Key - file, value - file's state (ranges from 1 - 2, 1 - visiting file, 2 - done visiting file).
 // Includes field is used to save includes. Key - include file, value - the file that includes include file.
 // MissingFiles field is used to save nonexistent files. Key - include file, value - the file that includes include file.
-type ParseContext struct {
+type parseContext struct {
 	State    map[string]int
 	Includes map[string]string
 
@@ -820,19 +886,19 @@ type ParseContext struct {
 }
 
 // NewParseContext function initializes maps of ParseContext struct.
-func NewParseContext() *ParseContext {
-	return &ParseContext{
+func newParseContext() *parseContext {
+	return &parseContext{
 		State:        make(map[string]int),
 		Includes:     make(map[string]string),
 		MissingFiles: make(map[string]string),
 	}
 }
 
-// ParseIncludes checks file for @includes and appends it to ParseContext field Includes.
-// If ParseIncludes stumbles upon nonexistent file that is being included, that file is being appended to ParseContext field MissingFiles.
-func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
+// parseIncludes checks file for @includes and appends it to ParseContext field Includes.
+// If parseIncludes stumbles upon nonexistent file that is being included, that file is being appended to ParseContext field MissingFiles.
+func parseIncludes(ctx *parseContext, fileDir string, current string) error {
 
-	Ld(fmt.Sprintf("parse file on includes %s", fileDir))
+	ld(fmt.Sprintf("parse file on includes %s", fileDir))
 
 	if ctx.State[fileDir] == visiting {
 		return fmt.Errorf("include loop detected %s included by %s already included by %s",
@@ -870,30 +936,30 @@ func ParseIncludes(ctx *ParseContext, fileDir string, current string) error {
 	dir := filepath.Dir(fileDir)
 	scanner := bufio.NewScanner(file)
 
-	Ld(fmt.Sprintf("parse file on includes %s", fileDir))
+	ld(fmt.Sprintf("parse file on includes %s", fileDir))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "@") {
 			continue
 		}
 
-		m := IncludePattern.FindStringSubmatch(line)
+		m := includePattern.FindStringSubmatch(line)
 		if m == nil {
-			Le(fmt.Sprintf("wrong include line in %s: %s", fileDir, line))
+			le(fmt.Sprintf("wrong include line in %s: %s", fileDir, line))
 			// le("wrong include")
 			continue
 		}
 		includeName := m[1]
 		includeDir := filepath.Join(dir, includeName)
 
-		Ld(fmt.Sprintf("%s include %s dir %s", fileDir, includeName, dir))
+		ld(fmt.Sprintf("%s include %s dir %s", fileDir, includeName, dir))
 		// ld("file include include dir")
 
 		if _, exists := ctx.Includes[includeDir]; !exists {
 			ctx.Includes[includeDir] = fileDir
 		}
 
-		if err := ParseIncludes(ctx, includeDir, fileDir); err != nil {
+		if err := parseIncludes(ctx, includeDir, fileDir); err != nil {
 			return fmt.Errorf("include %s -> %s: %w", fileDir, includeDir, err)
 		}
 	}
@@ -913,7 +979,7 @@ func getEntriesProjectMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("error reading dir: %w", err)
 	}
 	for _, entry := range entries {
-		match := MigrationPattern.MatchString(entry.Name())
+		match := migrationPattern.MatchString(entry.Name())
 		if !match {
 			continue
 		}
@@ -925,7 +991,7 @@ func getEntriesProjectMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
 
 func getEntriesModuleMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
 	entriesModuleMap := make(map[string]struct{})
-	moduleDirs, err := GetModuleDir(fsys, dir)
+	moduleDirs, err := getModuleDir(fsys, dir)
 	if err != nil {
 		return nil, fmt.Errorf("error getting info on modules' path: %w", err)
 	}
@@ -941,7 +1007,7 @@ func getEntriesModuleMap(fsys fs.FS, dir string) (map[string]struct{}, error) {
 			return nil, fmt.Errorf("error reading directory: %w", err)
 		}
 		for _, entry := range entries {
-			match := MigrationPattern.MatchString(entry.Name())
+			match := migrationPattern.MatchString(entry.Name())
 			if !match {
 				continue
 			}

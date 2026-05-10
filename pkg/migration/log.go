@@ -6,44 +6,44 @@ import (
 )
 
 const (
-	Red    = "\033[31m"
-	Yellow = "\033[33m"
-	Purple = "\033[35m"
-	Bold   = "\033[1m"
-	Reset  = "\033[0m"
-	Green  = "\033[32m"
+	red    = "\033[31m"
+	yellow = "\033[33m"
+	purple = "\033[35m"
+	bold   = "\033[1m"
+	reset  = "\033[0m"
+	green  = "\033[32m"
 )
 
 // Ld function is a part of logging. Ld
-func Ld(msg string) {
+func ld(msg string) {
 	if Debug {
 		fmt.Printf("%s: %s\n",
-			Colorize("DEBUG", Yellow+Bold),
-			Colorize(msg, Yellow),
+			colorize("DEBUG", yellow+bold),
+			colorize(msg, yellow),
 		)
 	}
 }
 
 // Lw function is a part of logging. Lw
-func Lw(msg string) {
+func lw(msg string) {
 	fmt.Printf("%s: %s\n",
-		Colorize("WARNING", Purple),
-		Colorize(msg, ""),
+		colorize("WARNING", purple),
+		colorize(msg, ""),
 	)
 }
 
 // Le function is a part of logging. Le
-func Le(msg string) {
+func le(msg string) {
 	fmt.Fprintf(os.Stderr, "%s: %s\n",
-		Colorize("ERROR", Red+Bold),
-		Colorize(msg, Red),
+		colorize("ERROR", red+bold),
+		colorize(msg, red),
 	)
 }
 
 // Colorize function
-func Colorize(s, color string) string {
+func colorize(s, color string) string {
 	if NoColor {
 		return s
 	}
-	return color + s + Reset
+	return color + s + reset
 }

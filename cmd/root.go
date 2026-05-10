@@ -9,6 +9,12 @@ import (
 )
 
 var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
+var (
 	rootCmd = &cobra.Command{
 		Use:          "migration",
 		Short:        "migration cli info short",
@@ -38,7 +44,6 @@ commands:
 	})
 
 	rootCmd.PersistentFlags().StringVar(&migration.CfgFile, "config", "", "config file is:")
-	// rootCmd.Flags().BoolVarP(&Verbose, "verbose", "v", false, "verbose")
 	rootCmd.PersistentFlags().BoolVar(&migration.NoColor, "no-color", false, "non-color logs")
 	rootCmd.PersistentFlags().BoolVarP(&migration.Debug, "debug", "d", false, "debug")
 	rootCmd.Flags().BoolP("version", "V", false, "print script version and exit")

@@ -9,6 +9,13 @@ import (
 	"strconv"
 )
 
+func Add() error {
+	if _, err := addMigrationPair(IncludeHelp, realVersionGetter{}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func findLastMigrationInfo(fsys fs.FS, dir string, baseName string) (int, string, error) {
 	pattern := regexp.MustCompile(fmt.Sprintf(`^%s-(\d+)\.up\.sql$`, regexp.QuoteMeta(baseName)))
 	var (
@@ -16,7 +23,8 @@ func findLastMigrationInfo(fsys fs.FS, dir string, baseName string) (int, string
 		lastFile string
 	)
 
-	dir = filepath.ToSlash(dir)
+	// io/fs paths must satisfy fs.ValidPath (no "."/".." segments); match migrationList normalization.
+	dir = filepath.ToSlash(filepath.Clean(dir))
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return 0, "", fmt.Errorf("failed to read directory %s: %v", dir, err)
@@ -76,16 +84,16 @@ func createMigrationFiles(dir string, baseName string, includeHelp bool) error {
 	return nil
 }
 
-func Add(includeFlag bool) (string, error) {
-	project, err := Describe(MigrationDir, "project")
+func addMigrationPair(includeFlag bool, getter versionGetter) (string, error) {
+	project, err := describe(MigrationDir, "project", getter)
 	if err != nil {
 		return "", fmt.Errorf("error describing dir: %w", err)
 	}
-	version, err := Describe(MigrationDir, "version")
+	version, err := describe(MigrationDir, "version", getter)
 	if err != nil {
 		return "", fmt.Errorf("error describing dir: %w", err)
 	}
-	release, err := Describe(MigrationDir, "release")
+	release, err := describe(MigrationDir, "release", getter)
 	if err != nil {
 		return "", fmt.Errorf("error describing dir: %w", err)
 	}
@@ -93,7 +101,9 @@ func Add(includeFlag bool) (string, error) {
 	baseName := fmt.Sprintf("%s-%s-%s", project, version, release)
 
 	fmt.Printf("Add migration script %s\n", baseName)
+
 	fsys := os.DirFS(".")
+
 	increment, _, err := findLastMigrationInfo(fsys, MigrationDir, baseName)
 	if err != nil {
 		return "", fmt.Errorf("failed to find last migration: %v", err)

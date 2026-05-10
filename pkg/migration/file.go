@@ -10,7 +10,7 @@ import (
 )
 
 // FindFileViaDir function
-func FindFileViaDir(fileDir string) (bool, error) {
+func findFileViaDir(fileDir string) (bool, error) {
 	_, err := os.Stat(fileDir)
 	if err == nil {
 		return true, nil
@@ -22,7 +22,7 @@ func FindFileViaDir(fileDir string) (bool, error) {
 }
 
 // FileMD5 function
-func FileMD5(path string) (string, error) {
+func fileMD5(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -43,7 +43,7 @@ func FileMD5(path string) (string, error) {
 }
 
 // StripDir function
-func StripDir(fileDir string) string {
+func stripDir(fileDir string) string {
 	cleanDir := filepath.Clean(fileDir)
 	dirSplit := strings.Split(cleanDir, string(filepath.Separator))
 	return strings.Join(dirSplit[1:], string(filepath.Separator))

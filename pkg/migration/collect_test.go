@@ -129,7 +129,7 @@ func TestAppendToFrom(t *testing.T) {
 				}
 			}
 			var existsFlag bool
-			existsFlag, err = FindFileViaDir(dstFile)
+			existsFlag, err = findFileViaDir(dstFile)
 			if err != nil {
 				t.Errorf("error FindFileViaDir: %v", err)
 				return
@@ -156,31 +156,33 @@ func TestMissedFiles(t *testing.T) {
 		{
 			name: "nothing to collect",
 			setup: func(t *testing.T) string {
-				migrationDir, err := os.MkdirTemp("", "test_migration_list_*")
+				tmpDir, err := os.MkdirTemp("", "test_missed_files_*")
 				if err != nil {
-					t.Fatalf("Failed to create dir: %v", err)
+					t.Fatalf("failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					if err := os.RemoveAll(migrationDir); err != nil {
+					if err := os.RemoveAll(tmpDir); err != nil {
 						t.Fatalf("failed to remove temp dir: %v", err)
 					}
 				})
-				testChdirRepo(t, migrationDir)
+				testChdirRepo(t, tmpDir)
 
-				projectDir := filepath.Join(migrationDir, "migrations")
-				projectIncludes := filepath.Join(projectDir, "includes")
-				moduleDir := filepath.Join(migrationDir, "module")
+				projectMigrationsDir := filepath.Join(tmpDir, "migrations")
+				projectIncludes := filepath.Join(projectMigrationsDir, "includes")
+				moduleDir := filepath.Join(tmpDir, "module")
 				moduleMigrationsDir := filepath.Join(moduleDir, "migrations")
 				moduleIncludes := filepath.Join(moduleMigrationsDir, "includes")
 
-				gitmodules := filepath.Join(migrationDir, ".gitmodules")
-				os.WriteFile(gitmodules, []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module"), 0644)
-
-				os.Mkdir(projectDir, 0755)
-				os.Mkdir(projectIncludes, 0755)
-				os.Mkdir(moduleDir, 0755)
-				os.Mkdir(moduleMigrationsDir, 0755)
-				os.Mkdir(moduleIncludes, 0755)
+				gitmodules := filepath.Join(tmpDir, ".gitmodules")
+				if err := os.WriteFile(gitmodules, []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module"), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				if err := os.MkdirAll(projectIncludes, 0755); err != nil {
+					t.Fatalf("eror creating directory: %v", err)
+				}
+				if err := os.MkdirAll(moduleIncludes, 0755); err != nil {
+					t.Fatalf("eror creating directory: %v", err)
+				}
 
 				baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
@@ -189,26 +191,35 @@ func TestMissedFiles(t *testing.T) {
 					for j := 1; j < 4; j++ {
 						projectNameUp := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 						projectNameDown := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
-						projectFileUp := filepath.Join(projectDir, projectNameUp)
-						projectFileDown := filepath.Join(projectDir, projectNameDown)
+						projectFileUp := filepath.Join(projectMigrationsDir, projectNameUp)
+						projectFileDown := filepath.Join(projectMigrationsDir, projectNameDown)
 
 						moduleNameUp := fmt.Sprintf("%s-%v-%v.up.sql", baseModuleName, i, j)
 						moduleNameDown := fmt.Sprintf("%s-%v-%v.down.sql", baseModuleName, i, j)
 						moduleFileUp := filepath.Join(moduleMigrationsDir, moduleNameUp)
 						moduleFileDown := filepath.Join(moduleMigrationsDir, moduleNameDown)
 
-						os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s", moduleNameUp)), 0644)
-						os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s", moduleNameDown)), 0644)
+						if err := os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s", moduleNameUp)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
+						if err := os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s", moduleNameDown)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 
-						md5up, _ := FileMD5(moduleFileUp)
-						md5down, _ := FileMD5(moduleFileDown)
-						moduleMD5 := md5up + md5down
+						concatMD5, err := concatMD5(moduleFileUp, moduleFileDown)
+						if err != nil {
+							t.Fatalf("error getting concat md5 of files: %v", err)
+						}
 
 						relativeModuleFileUp := testMetaPathForModuleFile(moduleNameUp)
 						relativeModuleFileDown := testMetaPathForModuleFile(moduleNameDown)
 
-						os.WriteFile(projectFileUp, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameUp, relativeModuleFileUp, moduleMD5)), 0644)
-						os.WriteFile(projectFileDown, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameDown, relativeModuleFileDown, moduleMD5)), 0644)
+						if err := os.WriteFile(projectFileUp, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameUp, relativeModuleFileUp, concatMD5)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
+						if err := os.WriteFile(projectFileDown, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameDown, relativeModuleFileDown, concatMD5)), 0644); err != nil {
+							t.Fatalf("error creating file: %v", err)
+						}
 
 					}
 				}
@@ -221,119 +232,131 @@ func TestMissedFiles(t *testing.T) {
 		{
 			name: "2 missing files",
 			setup: func(t *testing.T) string {
-				migrationDir, err := os.MkdirTemp("", "test_migration_list_*")
+				tmpDir, err := os.MkdirTemp("", "test_missed_files_*")
 				if err != nil {
-					t.Fatalf("Failed to create dir: %v", err)
+					t.Fatalf("failed to create dir: %v", err)
 				}
 				t.Cleanup(func() {
-					os.RemoveAll(migrationDir)
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Fatalf("failed to remove temp dir: %v", err)
+					}
 				})
-				testChdirRepo(t, migrationDir)
+				testChdirRepo(t, tmpDir)
 
-				// need to improvise with .git dir
-
-				projectDir := filepath.Join(migrationDir, "migrations")
-				projectIncludes := filepath.Join(projectDir, "includes")
-				moduleDir := filepath.Join(migrationDir, "module")
+				projectMigrationsDir := filepath.Join(tmpDir, "migrations")
+				projectIncludes := filepath.Join(projectMigrationsDir, "includes")
+				moduleDir := filepath.Join(tmpDir, "module")
 				moduleMigrationsDir := filepath.Join(moduleDir, "migrations")
 				moduleIncludes := filepath.Join(moduleMigrationsDir, "includes")
 
-				gitmodules := filepath.Join(migrationDir, ".gitmodules")
-				os.WriteFile(gitmodules, []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module"), 0644)
-
-				os.Mkdir(projectDir, 0755)
-				os.Mkdir(projectIncludes, 0755)
-				os.Mkdir(moduleDir, 0755)
-				os.Mkdir(moduleMigrationsDir, 0755)
-				os.Mkdir(moduleIncludes, 0755)
+				gitmodules := filepath.Join(tmpDir, ".gitmodules")
+				if err := os.WriteFile(gitmodules, []byte("[submodule \"module\"]\n\tpath = module\n\turl = ./module"), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				if err := os.MkdirAll(projectIncludes, 0755); err != nil {
+					t.Fatalf("eror creating directory: %v", err)
+				}
+				if err := os.MkdirAll(moduleIncludes, 0755); err != nil {
+					t.Fatalf("eror creating directory: %v", err)
+				}
 
 				baseProjectName := "test-project-0.1.0"
 				baseModuleName := "test-module-0.1.0"
-				baseIncludeName := "include"
 
 				for i := 1; i < 5; i++ {
 					for j := 1; j < 4; j++ {
 						projectNameUp := fmt.Sprintf("%s-%v-%v.up.sql", baseProjectName, i, j)
 						projectNameDown := fmt.Sprintf("%s-%v-%v.down.sql", baseProjectName, i, j)
-						projectFileUp := filepath.Join(projectDir, projectNameUp)
-						projectFileDown := filepath.Join(projectDir, projectNameDown)
+						projectFileUp := filepath.Join(projectMigrationsDir, projectNameUp)
+						projectFileDown := filepath.Join(projectMigrationsDir, projectNameDown)
 
 						moduleNameUp := fmt.Sprintf("%s-%v-%v.up.sql", baseModuleName, i, j)
 						moduleNameDown := fmt.Sprintf("%s-%v-%v.down.sql", baseModuleName, i, j)
 						moduleFileUp := filepath.Join(moduleMigrationsDir, moduleNameUp)
 						moduleFileDown := filepath.Join(moduleMigrationsDir, moduleNameDown)
-
-						if i == 3 && j == 2 {
-							includeName1 := fmt.Sprintf("%s_1.txt", baseIncludeName)
-							includeName2 := fmt.Sprintf("%s_2.txt", baseIncludeName)
-							moduleIncludeFile1 := filepath.Join(moduleIncludes, includeName1)
-							moduleIncludeFile2 := filepath.Join(moduleIncludes, includeName2)
-							// projectIncludeFile1 := filepath.Join(projectIncludes, includeName1)
-							// projectIncludeFile2 := filepath.Join(projectIncludes, includeName2)
-
-							os.WriteFile(moduleIncludeFile1, []byte("1"), 0644)
-							os.WriteFile(moduleIncludeFile2, []byte("2"), 0644)
-							// os.WriteFile(projectIncludeFile1, []byte("1"), 0644)
-							// os.WriteFile(projectIncludeFile2, []byte("2"), 0644)
-
-							os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s\n@includes/%s", moduleNameUp, includeName1)), 0644)
-							os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s\n@includes/%s", moduleNameDown, includeName2)), 0644)
-
-							// md5up, _ := FileMD5(moduleFileUp)
-							// md5down, _ := FileMD5(moduleFileDown)
-							// moduleMD5 := md5up + md5down
-
-							// relativeModuleFileUp := testMetaPathForModuleFile(moduleNameUp)
-							// relativeModuleFileDown := testMetaPathForModuleFile(moduleNameDown)
-
-							// os.WriteFile(projectFileUp, []byte(fmt.Sprintf("# %s\n#migration: %s;%s\n@includes/%s", projectNameUp, relativeModuleFileUp, moduleMD5, includeName1)), 0644)
-							// os.WriteFile(projectFileDown, []byte(fmt.Sprintf("# %s\n#migration: %s;%s\n@includes/%s", projectNameDown, relativeModuleFileDown, moduleMD5, includeName2)), 0644)
-						} else if i == 2 && j == 3 {
+						switch {
+						case i == 3 && j == 2:
+							if err := os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s", moduleNameUp)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
+							if err := os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s", moduleNameDown)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
+						case i == 2 && j == 3:
 							continue
-						} else {
-							os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s", moduleNameUp)), 0644)
-							os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s", moduleNameDown)), 0644)
+						default:
+							if err := os.WriteFile(moduleFileUp, []byte(fmt.Sprintf("# %s", moduleNameUp)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
+							if err := os.WriteFile(moduleFileDown, []byte(fmt.Sprintf("# %s", moduleNameDown)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
 
-							md5up, _ := FileMD5(moduleFileUp)
-							md5down, _ := FileMD5(moduleFileDown)
-							moduleMD5 := md5up + md5down
+							concatMD5, err := concatMD5(moduleFileUp, moduleFileDown)
+							if err != nil {
+								t.Fatalf("error getting concat md5 of files: %v", err)
+							}
 
 							relativeModuleFileUp := testMetaPathForModuleFile(moduleNameUp)
 							relativeModuleFileDown := testMetaPathForModuleFile(moduleNameDown)
 
-							os.WriteFile(projectFileUp, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameUp, relativeModuleFileUp, moduleMD5)), 0644)
-							os.WriteFile(projectFileDown, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameDown, relativeModuleFileDown, moduleMD5)), 0644)
+							if err := os.WriteFile(projectFileUp, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameUp, relativeModuleFileUp, concatMD5)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
+							if err := os.WriteFile(projectFileDown, []byte(fmt.Sprintf("# %s\n#migration: %s;%s", projectNameDown, relativeModuleFileDown, concatMD5)), 0644); err != nil {
+								t.Fatalf("error creating file: %v", err)
+							}
 						}
 					}
 				}
 				return "migrations"
 			},
 			wantCollectedCnt: 2,
-			wantProjectErr:   false,
+			wantProjectErr:   true,
 			wantErr:          false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			savedMigrationDir := MigrationDir
+			t.Cleanup(func() { MigrationDir = savedMigrationDir })
 			migrationRelDir := tt.setup(t)
+			MigrationDir = migrationRelDir
 			fsys := os.DirFS(".")
-			rslts, err := MigrationList(fsys, migrationRelDir)
+			rslts, err := migrationList(fsys, migrationRelDir)
 			if err != nil {
-				t.Errorf("migrationList failed: %s", err)
+				t.Errorf("migrationList failed: %v", err)
 				return
 			}
-
-			collected, err := MissedFiles(rslts.MissedFiles, rslts.ModuleMigrations)
+			collected, err := missedFiles(rslts.MissedFiles, mockVersionGetter{})
 			if (err != nil) != tt.wantErr {
-				t.Errorf("MissingFiles() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("missedFiles() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if (len(rslts.MissedFiles) != 0) != tt.wantProjectErr {
-				t.Errorf("MissedFiles() found = %v, want %v", (len(rslts.MissedFiles) != 0), tt.wantProjectErr)
+				t.Errorf("missedFiles() found = %v, want %v", (len(rslts.MissedFiles) != 0), tt.wantProjectErr)
 			}
 			if collected != tt.wantCollectedCnt {
-				t.Errorf("MissedFiles() found = %v, want %v", collected, tt.wantCollectedCnt)
+				t.Errorf("missedFiles() found = %v, want %v", collected, tt.wantCollectedCnt)
 			}
 		})
 	}
+}
+
+type mockVersionGetter struct{}
+
+func (r mockVersionGetter) GetProjectFromGit(dir string) (string, error) {
+	return "test-project", nil
+}
+
+func (r mockVersionGetter) GetVersion(dir string) (string, error) {
+	return "0.1.0", nil
+}
+
+func (r mockVersionGetter) GetRelease() string {
+	return "1"
+}
+
+func (r mockVersionGetter) GetFull(dir string) (string, error) {
+	return "test-project-0.1.0-1", nil
 }

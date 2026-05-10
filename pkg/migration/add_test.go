@@ -188,7 +188,7 @@ func TestCreateMigrationFiles(t *testing.T) {
 		},
 		{
 			name: "no dir",
-			setup: func(t *testing.T) (string, string, bool) {
+			setup: func(_ *testing.T) (string, string, bool) {
 				tmpDir := "noDir"
 				base := "test-func-0.1.0-1"
 				includeHelp := false
@@ -233,11 +233,11 @@ func TestCreateMigrationFiles(t *testing.T) {
 			upFile := filepath.Join(tmpDir, fmt.Sprintf("%s.up.sql", baseName))
 			downFile := filepath.Join(tmpDir, fmt.Sprintf("%s.down.sql", baseName))
 
-			rsltUp, err := FindFileViaDir(upFile)
+			rsltUp, err := findFileViaDir(upFile)
 			if err != nil {
 				t.Fatalf("error FindFileViaDir: %v", err)
 			}
-			rsltDown, err := FindFileViaDir(downFile)
+			rsltDown, err := findFileViaDir(downFile)
 			if err != nil {
 				t.Fatalf("error FindFileViaDir: %v", err)
 			}
@@ -255,10 +255,10 @@ func TestCreateMigrationFiles(t *testing.T) {
 	}
 }
 
-func TestAdd(t *testing.T) {
+// func TestAdd(t *testing.T) {
 
-}
+// }
 
-func TestMiniHelp(t *testing.T) {
+// func TestMiniHelp(t *testing.T) {
 
-}
+// }

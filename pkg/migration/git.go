@@ -10,8 +10,8 @@ import (
 	versiongo "github.com/AlexBurnes/version-go/pkg/version"
 )
 
-// GetModuleDir function
-func GetModuleDir(fsys fs.FS, path string) ([]string, error) {
+// getModuleDir function
+func getModuleDir(fsys fs.FS, path string) ([]string, error) {
 	rslt := []string{}
 	outerDir := filepath.Dir(path)
 	submoduleDir := filepath.Join(outerDir, ".gitmodules")
@@ -41,17 +41,42 @@ func GetModuleDir(fsys fs.FS, path string) ([]string, error) {
 	return rslt, nil
 }
 
-// Describe function
-func Describe(dir, arg string) (rslt string, err error) {
+type versionGetter interface {
+	GetProjectFromGit(dir string) (string, error)
+	GetVersion(dir string) (string, error)
+	GetRelease() string
+	GetFull(dir string) (string, error)
+}
+
+type realVersionGetter struct{}
+
+func (r realVersionGetter) GetProjectFromGit(dir string) (string, error) {
+	return versiongo.GetProjectFromGit(dir)
+}
+
+func (r realVersionGetter) GetVersion(dir string) (string, error) {
+	return versiongo.GetVersion(dir)
+}
+
+func (r realVersionGetter) GetRelease() string {
+	return versiongo.GetRelease()
+}
+
+func (r realVersionGetter) GetFull(dir string) (string, error) {
+	return versiongo.GetFull(dir)
+}
+
+// describe function
+func describe(dir, arg string, getter versionGetter) (rslt string, err error) {
 	switch arg {
 	case "project":
-		rslt, err = versiongo.GetProjectFromGit(dir)
+		rslt, err = getter.GetProjectFromGit(dir)
 	case "version":
-		rslt, err = versiongo.GetVersion(dir)
+		rslt, err = getter.GetVersion(dir)
 	case "release":
-		rslt = versiongo.GetRelease()
+		rslt = getter.GetRelease()
 	case "full":
-		rslt, err = versiongo.GetFull(dir)
+		rslt, err = getter.GetFull(dir)
 	default:
 		return "", fmt.Errorf("unknown argument")
 	}

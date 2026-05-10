@@ -17,7 +17,7 @@ func TestGetModuleDir(t *testing.T) {
 	}{
 		{
 			name: "fsys check",
-			setup: func(t *testing.T) fs.FS {
+			setup: func(_ *testing.T) fs.FS {
 				fsys := make(fstest.MapFS)
 				var builder strings.Builder
 
@@ -37,7 +37,7 @@ func TestGetModuleDir(t *testing.T) {
 		},
 		{
 			name: "fsys check2",
-			setup: func(t *testing.T) fs.FS {
+			setup: func(_ *testing.T) fs.FS {
 				fsys := make(fstest.MapFS)
 				gitmodulesText := "[submodule \"module\"]\n\tpath = module\n\turl = ./module"
 				fsys[".gitmodules"] = &fstest.MapFile{Data: []byte(gitmodulesText), Mode: 0644}
@@ -52,13 +52,13 @@ func TestGetModuleDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fsys := tt.setup(t)
 
-			resultMap, err := GetModuleDir(fsys, ".")
+			resultMap, err := getModuleDir(fsys, ".")
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetModuleDir() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getModuleDir() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if len(resultMap) != tt.wantEntryLen {
-				t.Errorf("GetModuleDir() found = %v, want %v", len(resultMap), tt.wantEntryLen)
+				t.Errorf("getModuleDir() found = %v, want %v", len(resultMap), tt.wantEntryLen)
 			}
 		})
 	}

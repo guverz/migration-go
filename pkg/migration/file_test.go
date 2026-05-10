@@ -11,7 +11,11 @@ func TestFindFileViaDir(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to created dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil && err == nil {
+			err = removeErr
+		}
+	}()
 
 	tests := []struct {
 		name      string
@@ -23,7 +27,9 @@ func TestFindFileViaDir(t *testing.T) {
 			name: "existing directory",
 			setup: func(tmpDir string) string {
 				dir := filepath.Join(tmpDir, "existing")
-				os.Mkdir(dir, 0755)
+				if err := os.Mkdir(dir, 0755); err != nil {
+					t.Fatalf("error creating dir: %v", err)
+				}
 				return dir
 			},
 			wantFound: true,
@@ -33,7 +39,9 @@ func TestFindFileViaDir(t *testing.T) {
 			name: "existing file",
 			setup: func(tmpDir string) string {
 				file := filepath.Join(tmpDir, "test.txt")
-				os.WriteFile(file, []byte("test"), 0644)
+				if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
 				return file
 			},
 			wantFound: true,
@@ -49,7 +57,7 @@ func TestFindFileViaDir(t *testing.T) {
 		},
 		{
 			name: "empty string",
-			setup: func(tmpDir string) string {
+			setup: func(_ string) string {
 				return ""
 			},
 			wantFound: false,
@@ -61,15 +69,15 @@ func TestFindFileViaDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testPath := tt.setup(tmpDir)
 
-			found, err := FindFileViaDir(testPath)
+			found, err := findFileViaDir(testPath)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FindFileViaDir() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("findFileViaDir() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
 			if found != tt.wantFound {
-				t.Errorf("FindFileViaDir() found = %v, want %v", found, tt.wantFound)
+				t.Errorf("findFileViaDir() found = %v, want %v", found, tt.wantFound)
 			}
 		})
 	}
@@ -143,15 +151,15 @@ func TestFileMD5(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testPath := tt.setup(tmpDir)
 
-			resultMD5, err := FileMD5(testPath)
+			resultMD5, err := fileMD5(testPath)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("FileMD5() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("fileMD5() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
 			if resultMD5 != tt.wantMD5 {
-				t.Errorf("FileMD5() resultMD5 = %v, want %v", resultMD5, tt.wantMD5)
+				t.Errorf("fileMD5() resultMD5 = %v, want %v", resultMD5, tt.wantMD5)
 			}
 		})
 	}
@@ -191,10 +199,10 @@ func TestStripDir(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := StripDir(tt.tempDir)
+			result := stripDir(tt.tempDir)
 
 			if result != tt.wantResult {
-				t.Errorf("StripDir() result = %v, want %v", result, tt.wantResult)
+				t.Errorf("stripDir() result = %v, want %v", result, tt.wantResult)
 			}
 		})
 	}
