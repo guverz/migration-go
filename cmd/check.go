@@ -25,5 +25,6 @@ func check() error {
 	if err := migration.Check(); err != nil {
 		return fmt.Errorf("check command failed: %w", err)
 	}
+
 	return nil
 }
