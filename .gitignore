@@ -6,7 +6,5 @@ exs.md
 migration.sh
 # Added by goreleaser init:
 dist/
-/.github
-.goreleaser.yaml
 lint-output.txt
 install.sh
