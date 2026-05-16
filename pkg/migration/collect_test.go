@@ -66,9 +66,6 @@ func TestAppendToFrom(t *testing.T) {
 
 				dstFilePath := filepath.Join(tmpDir, dstFileName)
 				srcFilePath := filepath.Join(tmpDir, srcFileName)
-				// if err := os.WriteFile(dstFilePath, []byte{}, 0644); err != nil {
-				// 	t.Fatalf("failed to create dstFile: %v", err)
-				// }
 				if err := os.WriteFile(srcFilePath, []byte(srcFileText), 0644); err != nil {
 					t.Fatalf("failed to create srcFile: %v", err)
 				}
@@ -93,7 +90,6 @@ func TestAppendToFrom(t *testing.T) {
 				})
 				dstFileName := "newfile.txt"
 				srcFileName := "source.txt"
-				// srcFileText := ""
 				srcFileHeader := "23"
 
 				dstFilePath := filepath.Join(tmpDir, dstFileName)
@@ -101,9 +97,6 @@ func TestAppendToFrom(t *testing.T) {
 				if err := os.WriteFile(dstFilePath, []byte{}, 0644); err != nil {
 					t.Fatalf("failed to create dstFile: %v", err)
 				}
-				// if err := os.WriteFile(srcFilePath, []byte(srcFileText), 0644); err != nil {
-				// t.Fatalf("failed to create srcFile: %v", err)
-				// }
 
 				return dstFilePath, srcFilePath, srcFileHeader
 			},

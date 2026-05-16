@@ -57,17 +57,17 @@ func createMigrationFiles(dir string, baseName string, includeHelp bool) error {
 	}
 
 	upContent := fmt.Sprintf("# %s.up.sql\n", baseName)
-	GetMiniHelp := ""
+	getMiniHelp := ""
 	if includeHelp {
 		var err error
-		GetMiniHelp, err = minihelp()
+		getMiniHelp, err = minihelp()
 		if err != nil {
 			return fmt.Errorf("error getting minihelp: %w", err)
 		}
 	}
 
 	if includeHelp {
-		upContent += GetMiniHelp + "\n"
+		upContent += getMiniHelp + "\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, baseName+".up.sql"), []byte(upContent), 0644); err != nil {
 		return fmt.Errorf("error writing file: %w", err)
@@ -75,7 +75,7 @@ func createMigrationFiles(dir string, baseName string, includeHelp bool) error {
 
 	downContent := fmt.Sprintf("# %s.down.sql\n", baseName)
 	if includeHelp {
-		downContent += GetMiniHelp + "\n"
+		downContent += getMiniHelp + "\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, baseName+".down.sql"), []byte(downContent), 0644); err != nil {
 		return fmt.Errorf("error writing file: %w", err)

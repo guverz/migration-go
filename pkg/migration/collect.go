@@ -288,6 +288,7 @@ func missedPairs(missedPairs map[string]string, moduleMigrations map[string]migr
 
 		for target, meta := range moduleMigrations {
 			if meta.DownFileName == missed || meta.UpFileName == missed {
+				fmt.Println(meta.UpFileName, meta.DownFileName)
 				modulePrefix = target
 				break
 			}
@@ -407,7 +408,7 @@ func migrationValidation(path string) error {
 	return nil
 }
 
-// firstly appends header, then appends srcFilePath text to newFilePath
+// appendToFrom function firstly appends header, then appends srcFilePath text to newFilePath
 func appendToFrom(newFilePath, srcFilePath, header string) error {
 	newFile, err := os.OpenFile(newFilePath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {

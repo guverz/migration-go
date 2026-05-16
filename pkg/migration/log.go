@@ -14,7 +14,7 @@ const (
 	green  = "\033[32m"
 )
 
-// Ld function is a part of logging. Ld
+// ld function is a part of logging.
 func ld(msg string) {
 	if Debug {
 		fmt.Printf("%s: %s\n",
@@ -24,7 +24,7 @@ func ld(msg string) {
 	}
 }
 
-// Lw function is a part of logging. Lw
+// lw function is a part of logging. lw
 func lw(msg string) {
 	fmt.Printf("%s: %s\n",
 		colorize("WARNING", purple),
@@ -32,7 +32,7 @@ func lw(msg string) {
 	)
 }
 
-// Le function is a part of logging. Le
+// le function is a part of logging. le
 func le(msg string) {
 	fmt.Fprintf(os.Stderr, "%s: %s\n",
 		colorize("ERROR", red+bold),
@@ -40,7 +40,7 @@ func le(msg string) {
 	)
 }
 
-// Colorize function
+// colorize function
 func colorize(s, color string) string {
 	if NoColor {
 		return s

@@ -207,3 +207,92 @@ func TestStripDir(t *testing.T) {
 		})
 	}
 }
+
+func TestConcatMD5(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test_file_md5_*")
+	if err != nil {
+		t.Errorf("failed to created dir: %v", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil && err == nil {
+			err = removeErr
+		}
+	}()
+
+	tests := []struct {
+		name    string
+		setup   func(string) (string, string)
+		wantMD5 string
+		wantErr bool
+	}{
+		{
+			name: "lorem impsum 100",
+			setup: func(tmpDir string) (string, string) {
+				text := "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur felis dolor, fringilla id vulputate eget, volutpat eleifend nisi. In hac habitasse platea dictumst. Maecenas sit amet felis eleifend, blandit nunc et, venenatis turpis. Etiam scelerisque nec arcu ac euismod. Proin maximus est in velit mollis mattis. Ut risus tortor, porttitor eget gravida a, consectetur non nisi. Proin volutpat congue convallis. Sed consectetur fermentum pulvinar. Pellentesque rutrum rutrum maximus. Quisque rhoncus, justo ac gravida auctor, turpis ex pharetra augue, faucibus dignissim dolor leo ut turpis. Maecenas et sem vitae nunc molestie sagittis. Aliquam non tincidunt felis. Nam quis ornare arcu. Maecenas."
+				file1 := filepath.Join(tmpDir, "test1.txt")
+				file2 := filepath.Join(tmpDir, "test2.txt")
+				if err := os.WriteFile(file1, []byte(text), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				if err := os.WriteFile(file2, []byte(text), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				return file1, file2
+			},
+			wantMD5: "fecdaaa968e07e70c5e2cdae6e03a836fecdaaa968e07e70c5e2cdae6e03a836",
+			wantErr: false,
+		},
+		{
+			name: "empty file",
+			setup: func(tmpDir string) (string, string) {
+				file1 := filepath.Join(tmpDir, "test1.txt")
+				file2 := filepath.Join(tmpDir, "test2.txt")
+				if err := os.WriteFile(file1, []byte(""), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				if err := os.WriteFile(file2, []byte(""), 0644); err != nil {
+					t.Fatalf("error creating file: %v", err)
+				}
+				return file1, file2
+			},
+			wantMD5: "d41d8cd98f00b204e9800998ecf8427ed41d8cd98f00b204e9800998ecf8427e",
+			wantErr: false,
+		},
+		{
+			name: "no file",
+			setup: func(tmpDir string) (string, string) {
+				file := filepath.Join(tmpDir, "none")
+				return file, file
+			},
+			wantMD5: "",
+			wantErr: false,
+		},
+		{
+			name: "dir",
+			setup: func(tmpDir string) (string, string) {
+				dir := filepath.Join(tmpDir, "dir")
+				if err := os.Mkdir(dir, 0755); err != nil {
+					t.Fatalf("error creating dir: %v", err)
+				}
+				return dir, dir
+			},
+			wantMD5: "",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upPath, downPath := tt.setup(tmpDir)
+
+			resultMD5, err := concatMD5(upPath, downPath)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("concatMD5() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if resultMD5 != tt.wantMD5 {
+				t.Errorf("concatMD5() resultMD5 = %v, want %v", resultMD5, tt.wantMD5)
+			}
+		})
+	}
+}

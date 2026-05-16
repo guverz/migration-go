@@ -48,5 +48,4 @@ commands:
 	rootCmd.PersistentFlags().BoolVarP(&migration.Debug, "debug", "d", false, "debug")
 	rootCmd.Flags().BoolP("version", "V", false, "print script version and exit")
 	rootCmd.Flags().BoolP("help", "h", false, "print this help and exit")
-
 }
