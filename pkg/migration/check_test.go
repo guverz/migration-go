@@ -821,7 +821,7 @@ func TestFillProjectMigrations(t *testing.T) {
 				}
 				return theMap
 			},
-			wantLen: 15,
+			wantLen: 30,
 			wantErr: false,
 		},
 		{

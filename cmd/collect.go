@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/guverz/migration-go/pkg/migration"
 
 	"github.com/spf13/cobra"
@@ -23,7 +21,7 @@ var collectCmd = &cobra.Command{
 
 func collect() error {
 	if err := migration.Collect(); err != nil {
-		return fmt.Errorf("collect command failed: %w", err)
+		return err
 	}
 	return nil
 }

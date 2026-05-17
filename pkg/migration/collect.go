@@ -10,20 +10,19 @@ import (
 
 func Collect() error {
 	collectedCnt := 0
-	var listError error
+	errorSl := []string{}
 	fsys := os.DirFS(".")
 
 	rslts, err := migrationList(fsys, MigrationDir)
 	if err != nil {
-		listError = fmt.Errorf("migrationList failed: %w", err)
-		// return fmt.Errorf("migrationList failed: %w", err)
+		return fmt.Errorf("migrationList failed: %w", err)
 	}
 
 	if len(rslts.MissedFiles) != 0 {
 		ld(fmt.Sprintf("there are unregistered migration files pairs (%d), collecting:\n", len(rslts.MissedFiles)))
 		collected, err := missedFiles(rslts.MissedFiles, realVersionGetter{})
 		if err != nil {
-			return err
+			errorSl = append(errorSl, fmt.Sprintf("%v", err))
 		}
 		collectedCnt += collected
 	}
@@ -31,7 +30,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of missed includes is (%d)\n", len(rslts.MissedIncludes)))
 		collected, err := missedIncludes(rslts.MissedIncludes)
 		if err != nil {
-			return err
+			errorSl = append(errorSl, fmt.Sprintf("%v", err))
 		}
 		collectedCnt += collected
 	}
@@ -39,7 +38,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of deleted files is %d", len(rslts.DeletedFiles)))
 		collected, err := missedPairs(rslts.MissedPairs, rslts.ModuleMigrations, rslts.ProjectMigrations)
 		if err != nil {
-			return err
+			errorSl = append(errorSl, fmt.Sprintf("%v", err))
 		}
 		collectedCnt += collected
 	}
@@ -47,7 +46,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of deleted includes is %d", len(rslts.DeletedIncludes)))
 		collected, err := deletedIncludes(rslts.DeletedIncludes, rslts.ProjectIncludes, rslts.ModuleIncludes)
 		if err != nil {
-			return err
+			errorSl = append(errorSl, fmt.Sprintf("%v", err))
 		}
 		collectedCnt += collected
 	}
@@ -55,7 +54,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of  deleted files is %d", len(rslts.DeletedFiles)))
 		collected, err := deletedFiles(rslts.DeletedFiles)
 		if err != nil {
-			return err
+			errorSl = append(errorSl, fmt.Sprintf("%v", err))
 		}
 		collectedCnt += collected
 	}
@@ -64,20 +63,22 @@ func Collect() error {
 	// return fmt.Errorf("error MigrationValidation: %w", err)
 	// }
 
-	if collectedCnt != 0 {
+	switch {
+	case collectedCnt != 0:
 		fmt.Printf("%s: %s\n",
 			colorize("[OK]", green),
 			colorize(fmt.Sprintf("collected %d file(s)", collectedCnt), reset),
 		)
-	} else {
+	case len(errorSl) != 0:
+		for _, err := range errorSl {
+			le(err)
+		}
+		return fmt.Errorf("error collecting files")
+	default:
 		fmt.Printf("%s: %s\n",
 			colorize("[OK]", green),
 			colorize("nothing to collect", reset),
 		)
-	}
-
-	if listError != nil {
-		return listError
 	}
 
 	return nil
@@ -232,7 +233,7 @@ func missedIncludes(missedIncludes map[string]string) (int, error) {
 	return collectedCnt, nil
 }
 
-func deletedIncludes(deletedIncludes map[string]string, projectIncludes map[string]string, moduleIncludes map[string]string) (int, error) {
+func deletedIncludes(deletedIncludes, projectIncludes, moduleIncludes map[string]string) (int, error) {
 	collectedCnt := 0
 	for include, included := range deletedIncludes {
 		fmt.Printf("include file %s included by %s\n", include, included)
@@ -288,7 +289,6 @@ func missedPairs(missedPairs map[string]string, moduleMigrations map[string]migr
 
 		for target, meta := range moduleMigrations {
 			if meta.DownFileName == missed || meta.UpFileName == missed {
-				fmt.Println(meta.UpFileName, meta.DownFileName)
 				modulePrefix = target
 				break
 			}

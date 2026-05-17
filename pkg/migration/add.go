@@ -11,7 +11,7 @@ import (
 
 func Add() error {
 	if _, err := addMigrationPair(IncludeHelp, realVersionGetter{}); err != nil {
-		return err
+		return fmt.Errorf("error adding migration pair: %w", err)
 	}
 	return nil
 }
