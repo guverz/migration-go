@@ -10,12 +10,11 @@ import (
 
 var (
 	CfgFile      string
+	Debug        bool
+	NoColor      bool
 	MiniHelpDir  string
 	MigrationDir string
 	IncludeHelp  bool
-	// ConcLimit    int
-	Debug   bool
-	NoColor bool
 )
 
 func InitConfig() {
@@ -52,6 +51,5 @@ func setDefaults() {
 func LoadConfigToConstants() {
 	MiniHelpDir = viper.GetString("directories.mini_help")
 	MigrationDir = viper.GetString("directories.migrations")
-	// ConcLimit = viper.GetInt("app.conc_limit")
 	IncludeHelp = viper.GetBool("help.include")
 }

@@ -3102,3 +3102,160 @@ func TestGetEntriesModuleMap(t *testing.T) {
 		})
 	}
 }
+
+func TestFillMissedFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func() (map[string]migrationInfo, map[string]migrationInfo, map[string]string)
+		wantLen int
+	}{
+		{
+			name: "normal behaviour",
+			setup: func() (map[string]migrationInfo, map[string]migrationInfo, map[string]string) {
+				rawMissedFiles := make(map[string]migrationInfo)
+				moduleMigrations := make(map[string]migrationInfo)
+				missedPairs := make(map[string]string)
+
+				projectMigrationDir := filepath.Join("tmp", "migrations")
+				moduleMigrationDir := filepath.Join("tmp", "module", "migrations")
+				baseProjectName := "test-module-0.1"
+				baseModuleName := "test-module-0.1"
+				for i := 1; i <= 10; i++ {
+					projectUpName := fmt.Sprintf("%s.%d.up.sql", baseProjectName, i)
+					projectDownName := fmt.Sprintf("%s.%d.down.sql", baseProjectName, i)
+					moduleUpName := fmt.Sprintf("%s.%d.up.sql", baseModuleName, i)
+					moduleDownName := fmt.Sprintf("%s.%d.down.sql", baseModuleName, i)
+					moduleUpPath := filepath.Join(moduleMigrationDir, moduleUpName)
+					moduleDownPath := filepath.Join(moduleMigrationDir, moduleDownName)
+					projectPrefix := fmt.Sprintf("%s.%d", baseProjectName, i)
+					modulePrefix := fmt.Sprintf("%s.%d", baseModuleName, i)
+					if i%2 == 0 {
+						rawMissedFiles[moduleUpPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						rawMissedFiles[moduleDownPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						moduleMigrations[modulePrefix] = migrationInfo{
+							Prefix:       projectPrefix,
+							Ext:          "sql",
+							Dir:          projectMigrationDir,
+							UpFileName:   projectUpName,
+							DownFileName: projectDownName,
+						}
+					} else {
+						moduleMigrations[modulePrefix] = migrationInfo{
+							Prefix:       projectPrefix,
+							Ext:          "sql",
+							Dir:          projectMigrationDir,
+							UpFileName:   projectUpName,
+							DownFileName: projectDownName,
+						}
+					}
+				}
+				return rawMissedFiles, moduleMigrations, missedPairs
+			},
+			wantLen: 10,
+		},
+		{
+			name: "missed pair",
+			setup: func() (map[string]migrationInfo, map[string]migrationInfo, map[string]string) {
+				rawMissedFiles := make(map[string]migrationInfo)
+				moduleMigrations := make(map[string]migrationInfo)
+				missedPairs := make(map[string]string)
+
+				projectMigrationDir := filepath.Join("tmp", "migrations")
+				moduleMigrationDir := filepath.Join("tmp", "module", "migrations")
+				baseProjectName := "test-module-0.1"
+				baseModuleName := "test-module-0.1"
+				for i := 1; i <= 10; i++ {
+					projectUpName := fmt.Sprintf("%s.%d.up.sql", baseProjectName, i)
+					projectDownName := fmt.Sprintf("%s.%d.down.sql", baseProjectName, i)
+					projectUpPath := filepath.Join(projectMigrationDir, projectUpName)
+					projectDownPath := filepath.Join(projectMigrationDir, projectDownName)
+					moduleUpName := fmt.Sprintf("%s.%d.up.sql", baseModuleName, i)
+					moduleDownName := fmt.Sprintf("%s.%d.down.sql", baseModuleName, i)
+					moduleUpPath := filepath.Join(moduleMigrationDir, moduleUpName)
+					moduleDownPath := filepath.Join(moduleMigrationDir, moduleDownName)
+					projectPrefix := fmt.Sprintf("%s.%d", baseProjectName, i)
+					modulePrefix := fmt.Sprintf("%s.%d", baseModuleName, i)
+					switch {
+					case i%4 == 0:
+						rawMissedFiles[moduleUpPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						rawMissedFiles[moduleDownPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						moduleMigrations[modulePrefix] = migrationInfo{
+							Prefix:       projectPrefix,
+							Ext:          "sql",
+							Dir:          projectMigrationDir,
+							UpFileName:   projectUpName,
+							DownFileName: projectDownName,
+						}
+					case i == 3:
+						missedPairs[projectUpPath] = projectDownPath
+						rawMissedFiles[moduleUpPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						rawMissedFiles[moduleDownPath] = migrationInfo{
+							Prefix:       modulePrefix,
+							Ext:          "sql",
+							Dir:          moduleMigrationDir,
+							UpFileName:   moduleUpName,
+							DownFileName: moduleDownName,
+						}
+						moduleMigrations[modulePrefix] = migrationInfo{
+							Prefix:       projectPrefix,
+							Ext:          "sql",
+							Dir:          projectMigrationDir,
+							UpFileName:   projectUpName,
+							DownFileName: projectDownName,
+						}
+					default:
+						moduleMigrations[modulePrefix] = migrationInfo{
+							Prefix:       projectPrefix,
+							Ext:          "sql",
+							Dir:          projectMigrationDir,
+							UpFileName:   projectUpName,
+							DownFileName: projectDownName,
+						}
+					}
+				}
+				return rawMissedFiles, moduleMigrations, missedPairs
+			},
+			wantLen: 4,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rawMissedFiles, moduleMigrations, missedPairs := tt.setup()
+
+			resultMap := fillMissedFiles(rawMissedFiles, moduleMigrations, missedPairs)
+			if len(resultMap) != tt.wantLen {
+				t.Errorf("fillMissedFiles() found = %v, want %v", len(resultMap), tt.wantLen)
+			}
+		})
+	}
+}

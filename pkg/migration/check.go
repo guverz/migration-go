@@ -251,7 +251,7 @@ func migrationList(fsys fs.FS, projectMigrationsDir string) (*listResults, error
 	// missedFiles
 	missedFiles := checkMissedFiles(rslts.ProjectMigrations, ModuleMap)
 
-	rslts.MissedFiles = fillMissedPairs(missedFiles, rslts.ModuleMigrations, rslts.MissedPairs)
+	rslts.MissedFiles = fillMissedFiles(missedFiles, rslts.ModuleMigrations, rslts.MissedPairs)
 	// INCLUDES
 
 	// filling in ParseContext for project, module and meta
@@ -348,7 +348,7 @@ func migrationList(fsys fs.FS, projectMigrationsDir string) (*listResults, error
 	return rslts, nil
 }
 
-func fillMissedPairs(rawMissedFiles map[string]migrationInfo, moduleMigrations map[string]migrationInfo, missedPairs map[string]string) map[string]migrationInfo {
+func fillMissedFiles(rawMissedFiles map[string]migrationInfo, moduleMigrations map[string]migrationInfo, missedPairs map[string]string) map[string]migrationInfo {
 	missedFiles := make(map[string]migrationInfo)
 	for modulePath, moduleInfo := range rawMissedFiles {
 		projectInfo := moduleMigrations[moduleInfo.Prefix]

@@ -22,7 +22,7 @@ func Collect() error {
 		ld(fmt.Sprintf("there are unregistered migration files pairs (%d), collecting:\n", len(rslts.MissedFiles)))
 		collected, err := missedFiles(rslts.MissedFiles, realVersionGetter{})
 		if err != nil {
-			errorSl = append(errorSl, fmt.Sprintf("%v", err))
+			errorSl = append(errorSl, err.Error())
 		}
 		collectedCnt += collected
 	}
@@ -30,7 +30,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of missed includes is (%d)\n", len(rslts.MissedIncludes)))
 		collected, err := missedIncludes(rslts.MissedIncludes)
 		if err != nil {
-			errorSl = append(errorSl, fmt.Sprintf("%v", err))
+			errorSl = append(errorSl, err.Error())
 		}
 		collectedCnt += collected
 	}
@@ -38,7 +38,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of deleted files is %d", len(rslts.DeletedFiles)))
 		collected, err := missedPairs(rslts.MissedPairs, rslts.ModuleMigrations, rslts.ProjectMigrations)
 		if err != nil {
-			errorSl = append(errorSl, fmt.Sprintf("%v", err))
+			errorSl = append(errorSl, err.Error())
 		}
 		collectedCnt += collected
 	}
@@ -46,7 +46,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of deleted includes is %d", len(rslts.DeletedIncludes)))
 		collected, err := deletedIncludes(rslts.DeletedIncludes, rslts.ProjectIncludes, rslts.ModuleIncludes)
 		if err != nil {
-			errorSl = append(errorSl, fmt.Sprintf("%v", err))
+			errorSl = append(errorSl, err.Error())
 		}
 		collectedCnt += collected
 	}
@@ -54,7 +54,7 @@ func Collect() error {
 		ld(fmt.Sprintf("the number of  deleted files is %d", len(rslts.DeletedFiles)))
 		collected, err := deletedFiles(rslts.DeletedFiles)
 		if err != nil {
-			errorSl = append(errorSl, fmt.Sprintf("%v", err))
+			errorSl = append(errorSl, err.Error())
 		}
 		collectedCnt += collected
 	}
@@ -328,85 +328,85 @@ func missedPairs(missedPairs map[string]string, moduleMigrations map[string]migr
 	return collectedCnt, nil
 }
 
-func migrationValidation(path string) error {
-	wrongFilesCnt := 0
-	migrations := make(map[string]string)
-	projectContext := newParseContext()
+// func migrationValidation(path string) error {
+// 	wrongFilesCnt := 0
+// 	migrations := make(map[string]string)
+// 	projectContext := newParseContext()
 
-	var files []string
+// 	var files []string
 
-	err := filepath.WalkDir(path, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("error walking dir: %w", err)
-		}
-		if d.IsDir() {
-			return nil
-		}
+// 	err := filepath.WalkDir(path, func(path string, d os.DirEntry, err error) error {
+// 		if err != nil {
+// 			return fmt.Errorf("error walking dir: %w", err)
+// 		}
+// 		if d.IsDir() {
+// 			return nil
+// 		}
 
-		if strings.HasSuffix(path, "README.md") || strings.HasSuffix(path, ".txt") {
-			return nil
-		}
-		ld(fmt.Sprintf("found file at %s", path))
-		files = append(files, path)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("error walking dir: %w", err)
-	}
+// 		if strings.HasSuffix(path, "README.md") || strings.HasSuffix(path, ".txt") {
+// 			return nil
+// 		}
+// 		ld(fmt.Sprintf("found file at %s", path))
+// 		files = append(files, path)
+// 		return nil
+// 	})
+// 	if err != nil {
+// 		return fmt.Errorf("error walking dir: %w", err)
+// 	}
 
-	for _, file := range files {
-		fileName := filepath.Base(file)
-		migrations[fileName] = file
-		// ld "file ${file_name} check name is correct $file"
-		ld(fmt.Sprintf("file %s check if name is correct %s", fileName, file))
-		if migrationPattern.MatchString(fileName) {
-			if err := parseIncludes(projectContext, file, ""); err != nil {
-				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
-			}
-			if len(projectContext.MissingFiles) != 0 {
-				lw("deleted Includes:")
-				for include := range projectContext.MissingFiles {
-					fmt.Println(include)
-					wrongFilesCnt++
-					// rslts.DeletedIncludesCnt++
-				}
-			}
-		}
-	}
+// 	for _, file := range files {
+// 		fileName := filepath.Base(file)
+// 		migrations[fileName] = file
+// 		// ld "file ${file_name} check name is correct $file"
+// 		ld(fmt.Sprintf("file %s check if name is correct %s", fileName, file))
+// 		if migrationPattern.MatchString(fileName) {
+// 			if err := parseIncludes(projectContext, file, ""); err != nil {
+// 				return fmt.Errorf("error parsing includes of %s, Error: %w", fileName, err)
+// 			}
+// 			if len(projectContext.MissingFiles) != 0 {
+// 				lw("deleted Includes:")
+// 				for include := range projectContext.MissingFiles {
+// 					fmt.Println(include)
+// 					wrongFilesCnt++
+// 					// rslts.DeletedIncludesCnt++
+// 				}
+// 			}
+// 		}
+// 	}
 
-	for fileName, fileDir := range migrations {
-		relative := strings.TrimPrefix(fileDir, path+"/")
-		matches := migrationPattern.FindStringSubmatch(fileName)
-		if matches == nil {
-			if _, exists := projectContext.Includes[relative]; !exists {
-				// undefined includes crawl in here and activate Le; I think that's not how it's supposed to work
-				le(fmt.Sprintf("%s wrong file name suffix expect .up.sql or .down.sql", fileName))
-				wrongFilesCnt++
-				continue
-			}
-			continue
-		}
+// 	for fileName, fileDir := range migrations {
+// 		relative := strings.TrimPrefix(fileDir, path+"/")
+// 		matches := migrationPattern.FindStringSubmatch(fileName)
+// 		if matches == nil {
+// 			if _, exists := projectContext.Includes[relative]; !exists {
+// 				// undefined includes crawl in here and activate Le; I think that's not how it's supposed to work
+// 				le(fmt.Sprintf("%s wrong file name suffix expect .up.sql or .down.sql", fileName))
+// 				wrongFilesCnt++
+// 				continue
+// 			}
+// 			continue
+// 		}
 
-		prefix := matches[1]
-		suffix := matches[2]
+// 		prefix := matches[1]
+// 		suffix := matches[2]
 
-		var counterpart string
-		if suffix == "up" {
-			counterpart = prefix + ".down.sql"
-		} else {
-			counterpart = prefix + ".up.sql"
-		}
-		ld(fmt.Sprintf("file %s check if counterpart %s exists", fileName, counterpart))
-		if _, exists := migrations[counterpart]; !exists {
-			le(fmt.Sprintf("%s counterpart %s not found", fileName, counterpart))
-			wrongFilesCnt++
-		}
-	}
-	if wrongFilesCnt != 0 {
-		return fmt.Errorf("there are (%d) wrong files", wrongFilesCnt)
-	}
-	return nil
-}
+// 		var counterpart string
+// 		if suffix == "up" {
+// 			counterpart = prefix + ".down.sql"
+// 		} else {
+// 			counterpart = prefix + ".up.sql"
+// 		}
+// 		ld(fmt.Sprintf("file %s check if counterpart %s exists", fileName, counterpart))
+// 		if _, exists := migrations[counterpart]; !exists {
+// 			le(fmt.Sprintf("%s counterpart %s not found", fileName, counterpart))
+// 			wrongFilesCnt++
+// 		}
+// 	}
+// 	if wrongFilesCnt != 0 {
+// 		return fmt.Errorf("there are (%d) wrong files", wrongFilesCnt)
+// 	}
+// 	return nil
+// }
 
 // appendToFrom function firstly appends header, then appends srcFilePath text to newFilePath
 func appendToFrom(newFilePath, srcFilePath, header string) error {
