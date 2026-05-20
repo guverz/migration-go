@@ -19,7 +19,7 @@ var (
 		Use:          "migration",
 		Short:        "migration cli info short",
 		Long:         `migration cli info long`,
-		Version:      "0.1",
+		Version:      version,
 		SilenceUsage: true,
 	}
 )
