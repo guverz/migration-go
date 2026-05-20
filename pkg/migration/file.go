@@ -47,6 +47,11 @@ func fileMD5(path string) (string, error) {
 func stripDir(fileDir string) string {
 	cleanDir := filepath.Clean(fileDir)
 	dirSplit := strings.Split(cleanDir, string(filepath.Separator))
+
+	if len(dirSplit) <= 1 {
+		return ""
+	}
+
 	return strings.Join(dirSplit[1:], string(filepath.Separator))
 }
 

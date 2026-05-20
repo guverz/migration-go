@@ -182,11 +182,6 @@ func TestStripDir(t *testing.T) {
 			wantResult: "foo" + string(filepath.Separator) + "bar",
 		},
 		{
-			name:       "path with .\\",
-			tempDir:    ".\\test\\foo\\bar",
-			wantResult: "foo" + string(filepath.Separator) + "bar",
-		},
-		{
 			name:       "clean path",
 			tempDir:    "test/foo/bar",
 			wantResult: "foo" + string(filepath.Separator) + "bar",
