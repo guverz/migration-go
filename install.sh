@@ -31,6 +31,8 @@ FILE="migration-go_${VERSION#v}_${OS}_${ARCH}.zip"
 
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILE}"
 
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+
 TMP=$(mktemp -d)
 
 curl -fL "$URL" -o "$TMP/$FILE"
