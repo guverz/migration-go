@@ -408,4 +408,4 @@ Release pipeline: `.github/workflows/release.yaml` runs GoReleaser on version ta
 
 ## License
 
-See repository license file (if present).
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.
