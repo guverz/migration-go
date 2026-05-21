@@ -52,16 +52,20 @@ release:
     owner: guverz
     name: migration-go
 
-scoop:
-  bucket:
-    owner: guverz
-    name: scoop-bucket
-    branch: main
-  homepage: "https://github.com/guverz/migration-go"
-  description: "CLI for managing database migration files across a Git repository and its Git submodules"
-  license: "MIT"
-  name: version
-  commit_msg_template: "chore(scoop): update migration-go to {{ .Tag }}"
-  url_template: "https://github.com/guverz/migration-go/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-  skip_upload: false
-  folder: "packaging/windows/scoop-bucket"
+scoops:
+  - name: migration-go
+
+    repository:
+      owner: guverz
+      name: scoop-bucket
+      branch: main
+
+    homepage: "https://github.com/guverz/migration-go"
+    description: "CLI for managing database migration files across a Git repository and its Git submodules"
+    license: MIT
+
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+
+    commit_msg_template: "chore(scoop): update migration-go to {{ .Tag }}"
