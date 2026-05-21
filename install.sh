@@ -35,6 +35,24 @@ TMP=$(mktemp -d)
 
 curl -fL "$URL" -o "$TMP/$FILE"
 
+curl -fL "$CHECKSUM_URL" -o "$TMP/checksums.txt"
+
+EXPECTED=$(grep " $FILE$" "$TMP/checksums.txt" | awk '{print $1}')
+
+if [ -z "$EXPECTED" ]; then
+    echo "Could not find checksum for $FILE"
+    exit 1
+fi
+
+ACTUAL=$(sha256sum "$TMP/$FILE" | awk '{print $1}')
+
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "Checksum verification failed"
+    exit 1
+fi
+
+echo "Checksum verified"
+
 cd "$TMP"
 
 unzip "$FILE"

@@ -29,8 +29,6 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/guverz/migration-go/cmd.version={{ .Version }}
-      - -X github.com/guverz/migration-go/cmd.commit={{ .Commit }}
-      - -X github.com/guverz/migration-go/cmd.date={{ .Date }}
 
 archives:
   - id: default
